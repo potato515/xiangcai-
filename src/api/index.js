@@ -134,5 +134,21 @@ export const aiGenerateApi = {
   formatArticle: (articleId) => request.get(`/ai-generate/format/${articleId}`),
   exportArticle: (articleId) => request.post(`/ai-generate/export/${articleId}`),
   getFormatSettings: () => request.get('/ai-generate/format-settings'),
-  saveFormatSettings: (data) => request.post('/ai-generate/format-settings', data)
+  saveFormatSettings: (data) => request.post('/ai-generate/format-settings', data),
+  // 文章生成队列（待生成列表）
+  getQueue: () => request.get('/ai-generate/queue'),
+  addToQueue: (data) => request.post('/ai-generate/queue/add', data),
+  batchAddToQueue: (data) => request.post('/ai-generate/queue/batch-add', data),
+  updateQueueItem: (id, data) => request.put(`/ai-generate/queue/${id}`, data),
+  batchUpdateQueue: (data) => request.post('/ai-generate/queue/batch-update', data),
+  removeFromQueue: (id) => request.delete(`/ai-generate/queue/${id}`),
+  batchDeleteQueue: (data) => request.post('/ai-generate/queue/batch-delete', data),
+  clearQueue: () => request.post('/ai-generate/queue/clear'),
+  // 批量生成任务
+  createBatchTask: (data) => request.post('/ai-generate/batch/create', data),
+  startBatchTask: (batchId) => request.post(`/ai-generate/batch/start/${batchId}`),
+  stopBatchTask: () => request.post('/ai-generate/batch/stop'),
+  getBatchTaskStatus: (batchId) => request.get(`/ai-generate/batch/status/${batchId}`),
+  getBatchTaskList: () => request.get('/ai-generate/batch/list'),
+  getBatchEngineStatus: () => request.get('/ai-generate/batch/engine-status')
 }

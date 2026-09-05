@@ -127,7 +127,13 @@ const menuList = computed(() => {
     return routes
       .filter(r => !r.meta?.hidden)
       .map(r => {
-        const fullPath = parentPath ? `${parentPath}/${r.path}`.replace(/\/+/g, '/') : r.path
+        // 确保路径以 / 开头，避免相对路径拼接问题
+        let fullPath
+        if (parentPath) {
+          fullPath = `${parentPath}/${r.path}`.replace(/\/+/g, '/')
+        } else {
+          fullPath = r.path.startsWith('/') ? r.path : `/${r.path}`
+        }
         return {
           path: fullPath,
           title: r.meta?.title || '',

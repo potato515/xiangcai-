@@ -146,6 +146,34 @@ class ArticleGenerator:
                     return t.get("prompt", "")
         return self.config.get("default_article_prompt", "")
 
+    def render_prompt_template(self, prompt, title, article_type="free"):
+        """
+        渲染提示词模板，替换其中的变量
+        支持的变量：
+        - {{title}} / {{ title }} / {{ Title }} / {{ TITLE }}: 文章标题
+        - {{article_type}} / {{ article_type }}: 文章类型（free/paid）
+        - {{type}} / {{ type }}: 文章类型中文（免费/付费）
+        - {title} / $title: 文章标题（兼容写法）
+        """
+        import re
+        if not prompt:
+            return prompt
+
+        rendered = prompt
+        type_cn = "付费" if article_type == "paid" else "免费"
+
+        # 使用正则表达式替换，支持任意空格和大小写
+        # {{title}} / {{ title }} / {{ Title }} / {{ TITLE }} 等
+        rendered = re.sub(r'\{\{\s*title\s*\}\}', title, rendered, flags=re.IGNORECASE)
+        rendered = re.sub(r'\{\{\s*article_type\s*\}\}', article_type, rendered, flags=re.IGNORECASE)
+        rendered = re.sub(r'\{\{\s*type\s*\}\}', type_cn, rendered, flags=re.IGNORECASE)
+
+        # 兼容写法
+        rendered = rendered.replace("{title}", title)
+        rendered = rendered.replace("$title", title)
+
+        return rendered
+
     def generate(self, title, platform, account_id, article_type_id=None,
                  article_type="free", apply_prompt=""):
         """
@@ -167,6 +195,10 @@ class ArticleGenerator:
             prompt = self.get_prompt(article_type_id)
             if not prompt:
                 return False, None, "未配置文章生成提示词，请先在AI配置中添加"
+
+            # 渲染提示词模板，替换 {{title}} 等变量
+            prompt = self.render_prompt_template(prompt, title, article_type)
+            self.print_info(f"提示词模板已渲染，标题: {title[:30]}...")
 
             # 获取AI服务
             ai_service = self.get_ai_service(platform, account_id)

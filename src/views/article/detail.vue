@@ -20,6 +20,10 @@
             <template #icon><icon-edit /></template>
             自动排版
           </a-button>
+          <a-button @click="copyArticleContent">
+            <template #icon><icon-copy /></template>
+            复制内容
+          </a-button>
           <a-button @click="exportWord">
             <template #icon><icon-download /></template>
             导出Word
@@ -355,6 +359,58 @@ async function autoFormat() {
   } catch (e) {
     Message.error('排版失败：' + (e.message || ''))
   }
+}
+
+// 复制文章内容
+function copyArticleContent() {
+  try {
+    if (!article.value || !article.value.chapters) {
+      Message.warning('文章内容为空')
+      return
+    }
+
+    // 拼接文章内容
+    let content = article.value.title + '\n\n'
+    article.value.chapters.forEach(chapter => {
+      if (chapter.title) {
+        content += chapter.title + '\n\n'
+      }
+      if (chapter.content) {
+        content += chapter.content + '\n\n'
+      }
+    })
+
+    // 复制到剪贴板
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(content).then(() => {
+        Message.success('文章内容已复制到剪贴板')
+      }).catch(() => {
+        // 降级方案：使用textarea
+        fallbackCopy(content)
+      })
+    } else {
+      fallbackCopy(content)
+    }
+  } catch (e) {
+    Message.error('复制失败：' + (e.message || ''))
+  }
+}
+
+// 降级复制方案
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand('copy')
+    Message.success('文章内容已复制到剪贴板')
+  } catch (e) {
+    Message.error('复制失败，请手动复制')
+  }
+  document.body.removeChild(textarea)
 }
 
 // 导出Word

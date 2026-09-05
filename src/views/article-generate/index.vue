@@ -1,338 +1,590 @@
 <template>
   <div class="article-generate-page">
-    <a-card title="文章生成" :bordered="false">
-      <a-form layout="vertical" :model="form">
-        <!-- 第一步：选择标题和内容配置 -->
-        <a-divider orientation="left">第一步：标题与内容配置</a-divider>
-        <a-form-item label="文章标题" required>
-          <a-textarea
-            v-model="form.title"
-            :auto-size="{ minRows: 2, maxRows: 4 }"
-            placeholder="请输入文章标题，或从下方采集标题中选择"
-          />
-        </a-form-item>
+    <!-- 批量任务进度 -->
+    <a-card v-if="batchRunning || batchTask" title="批量生成任务进度" :bordered="false" style="margin-bottom: 16px;">
+      <a-descriptions :column="3" bordered size="small">
+        <a-descriptions-item label="任务状态">
+          <a-tag :color="batchStatusColor">{{ batchStatusText }}</a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item label="当前进度">
+          {{ batchTask ? `${batchTask.current_index + 1}/${batchTask.total_count}` : '-' }}
+        </a-descriptions-item>
+        <a-descriptions-item label="成功/失败">
+          <span style="color: #00b42a;">{{ batchTask?.success_count || 0 }}</span>
+          /
+          <span style="color: #f53f3f;">{{ batchTask?.failed_count || 0 }}</span>
+        </a-descriptions-item>
+        <a-descriptions-item label="当前标题" :span="2">
+          {{ batchTask?.current_title || '-' }}
+        </a-descriptions-item>
+        <a-descriptions-item label="操作">
+          <a-button v-if="batchRunning" size="small" status="danger" @click="stopBatchTask">停止任务</a-button>
+        </a-descriptions-item>
+      </a-descriptions>
+      <a-progress
+        v-if="batchTask"
+        :percent="batchTask.total_count ? Math.round(((batchTask.current_index + 1) / batchTask.total_count) * 100) : 0"
+        style="margin-top: 12px;"
+      />
+    </a-card>
 
-        <a-row :gutter="16">
-          <a-col :span="12">
-            <a-form-item label="文章类型（选择后使用对应提示词）">
-              <a-select v-model="form.article_type_id" style="width: 100%;" allow-clear placeholder="不选择则使用默认提示词">
-                <a-option v-for="t in articleTypes" :key="t.id" :value="t.id">
-                  {{ t.name }}
-                </a-option>
+    <a-row :gutter="16">
+      <!-- 左侧：待生成队列 -->
+      <a-col :span="16">
+        <a-card title="文章生成队列" :bordered="false">
+          <template #extra>
+            <a-space>
+              <a-button size="small" @click="showAddModal = true">
+                <template #icon><icon-plus /></template>手动添加
+              </a-button>
+              <a-button size="small" status="danger" @click="clearQueue" :disabled="queue.length === 0">
+                <template #icon><icon-delete /></template>清空队列
+              </a-button>
+            </a-space>
+          </template>
+
+          <!-- 批量操作栏 -->
+          <div v-if="selectedQueueIds.length > 0" class="batch-bar">
+            <span>已选择 <strong style="color:#165dff">{{ selectedQueueIds.length }}</strong> 项</span>
+            <a-space>
+              <a-select
+                v-model="batchArticleTypeId"
+                placeholder="批量设置文章类型"
+                style="width: 180px;"
+                allow-clear
+                size="small"
+              >
+                <a-option v-for="t in articleTypes" :key="t.id" :value="t.id">{{ t.name }}</a-option>
               </a-select>
-            </a-form-item>
-          </a-col>
-          <a-col :span="12">
-            <a-form-item label="付费类型">
-              <a-radio-group v-model="form.article_type" type="button">
-                <a-radio value="free">免费类型</a-radio>
-                <a-radio value="paid">付费类型</a-radio>
-              </a-radio-group>
-            </a-form-item>
-          </a-col>
-        </a-row>
+              <a-button size="small" type="primary" @click="batchUpdateType">应用类型</a-button>
+              <a-button size="small" status="danger" @click="batchDeleteQueue">删除选中</a-button>
+              <a-button size="small" type="text" @click="selectedQueueIds = []">取消选择</a-button>
+            </a-space>
+          </div>
 
-        <a-form-item label="附加要求（可选）">
-          <a-textarea
-            v-model="form.apply_prompt"
-            :auto-size="{ minRows: 2, maxRows: 4 }"
-            placeholder="可选的附加要求，会追加到提示词后面"
-          />
-        </a-form-item>
+          <a-table
+            :data="queue"
+            :loading="queueLoading"
+            :pagination="false"
+            :bordered="{ cell: true }"
+            row-key="id"
+            size="small"
+          >
+            <template #columns>
+              <a-table-column title="" :width="50" align="center">
+                <template #header>
+                  <a-checkbox
+                    :model-value="isAllQueueSelected"
+                    :indeterminate="isQueueIndeterminate"
+                    @change="handleQueueSelectAll"
+                  />
+                </template>
+                <template #cell="{ record }">
+                  <a-checkbox
+                    :model-value="selectedQueueIds.includes(record.id)"
+                    @change="(checked) => handleQueueRowSelect(record, checked)"
+                  />
+                </template>
+              </a-table-column>
+              <a-table-column title="ID" data-index="id" :width="60" />
+              <a-table-column title="标题" data-index="title">
+                <template #cell="{ record }">
+                  <a-input
+                    v-if="editingId === record.id"
+                    v-model:value="editingTitle"
+                    size="small"
+                    @blur="saveEdit(record)"
+                    @keyup.enter="saveEdit(record)"
+                    ref="editInputRef"
+                  />
+                  <span v-else @click="startEdit(record)" style="cursor: pointer;">{{ record.title }}</span>
+                </template>
+              </a-table-column>
+              <a-table-column title="文章类型" :width="160">
+                <template #cell="{ record }">
+                  <a-select
+                    v-model:value="record.article_type_id"
+                    placeholder="默认类型"
+                    style="width: 100%;"
+                    allow-clear
+                    size="small"
+                    @change="updateQueueItem(record)"
+                  >
+                    <a-option v-for="t in articleTypes" :key="t.id" :value="t.id">{{ t.name }}</a-option>
+                  </a-select>
+                </template>
+              </a-table-column>
+              <a-table-column title="付费类型" :width="100">
+                <template #cell="{ record }">
+                  <a-tag :color="record.article_type === 'paid' ? 'orange' : 'green'" size="small">
+                    {{ record.article_type === 'paid' ? '付费' : '免费' }}
+                  </a-tag>
+                </template>
+              </a-table-column>
+              <a-table-column title="状态" :width="80">
+                <template #cell="{ record }">
+                  <a-tag :color="queueStatusColor(record.status)" size="small">{{ queueStatusText(record.status) }}</a-tag>
+                </template>
+              </a-table-column>
+              <a-table-column title="操作" :width="100" fixed="right">
+                <template #cell="{ record }">
+                  <a-button type="text" size="small" status="danger" @click="removeQueueItem(record)">删除</a-button>
+                </template>
+              </a-table-column>
+            </template>
+          </a-table>
 
-        <!-- 第二步：选择AI平台和账号 -->
-        <a-divider orientation="left">第二步：选择AI平台与账号</a-divider>
-        <a-row :gutter="16">
-          <a-col :span="12">
+          <a-empty v-if="queue.length === 0" description="队列为空，请从标题采集页面添加或手动添加" />
+        </a-card>
+      </a-col>
+
+      <!-- 右侧：批量任务配置 -->
+      <a-col :span="8">
+        <a-card title="批量生成配置" :bordered="false">
+          <a-form layout="vertical" :model="batchForm">
             <a-form-item label="AI平台" required>
-              <a-select v-model="form.platform" style="width: 100%;" @change="onPlatformChange">
+              <a-select v-model="batchForm.platform" style="width: 100%;" @change="onPlatformChange">
                 <a-option value="zhipu">智谱AI</a-option>
                 <a-option value="yuanbao">腾讯元宝</a-option>
                 <a-option value="doubao">豆包</a-option>
               </a-select>
             </a-form-item>
-          </a-col>
-          <a-col :span="12">
+
             <a-form-item label="选择账号" required>
-              <a-select v-model="form.account_id" style="width: 100%;" :placeholder="'请选择' + platformNames[form.platform] + '账号'">
+              <a-select v-model="batchForm.account_id" style="width: 100%;" :placeholder="'请选择' + platformNames[batchForm.platform] + '账号'">
                 <a-option v-for="acc in accounts" :key="acc.id" :value="acc.account_id">
                   {{ acc.name }}（{{ acc.account_id }}）
                 </a-option>
               </a-select>
             </a-form-item>
-          </a-col>
-        </a-row>
 
-        <a-form-item>
-          <a-space>
-            <a-button type="primary" :loading="generating" @click="generateArticle">
-              {{ generating ? '生成中...' : '开始生成文章' }}
-            </a-button>
-            <a-button @click="resetForm">重置</a-button>
-          </a-space>
+            <a-form-item label="生成配套图片">
+              <a-switch v-model="batchForm.generate_images" />
+              <span style="margin-left: 8px; font-size: 12px; color: var(--color-text-3);">为每篇文章的章节生成3张备选图</span>
+            </a-form-item>
+
+            <a-divider />
+
+            <a-form-item label="待生成数量">
+              <a-statistic :value="queue.length" suffix="篇" />
+            </a-form-item>
+
+            <a-form-item>
+              <a-button
+                type="primary"
+                long
+                :loading="batchStarting"
+                :disabled="queue.length === 0 || !batchForm.platform || !batchForm.account_id || batchRunning"
+                @click="startBatchTask"
+              >
+                <template #icon><icon-play-circle /></template>
+                启动批量生成（{{ queue.length }}篇）
+              </a-button>
+            </a-form-item>
+
+            <a-alert type="info" style="margin-top: 12px;">
+              <template #content>
+                <div style="font-size: 12px; line-height: 1.6;">
+                  <p><strong>执行逻辑：</strong></p>
+                  <p>• 按顺序逐个生成文章与配套图片</p>
+                  <p>• 单篇失败不中断，自动继续下一篇</p>
+                  <p>• 单篇最大超时时间：6分钟</p>
+                  <p>• 未选择文章类型的使用系统默认类型</p>
+                </div>
+              </template>
+            </a-alert>
+          </a-form>
+        </a-card>
+      </a-col>
+    </a-row>
+
+    <!-- 手动添加弹窗 -->
+    <a-modal v-model:visible="showAddModal" title="手动添加文章到队列" @ok="addManualItem">
+      <a-form layout="vertical">
+        <a-form-item label="文章标题" required>
+          <a-textarea v-model:value="manualTitle" :auto-size="{ minRows: 2, maxRows: 4 }" placeholder="请输入文章标题" />
+        </a-form-item>
+        <a-form-item label="文章类型">
+          <a-select v-model:value="manualArticleTypeId" allow-clear placeholder="不选择则使用默认类型" style="width: 100%;">
+            <a-option v-for="t in articleTypes" :key="t.id" :value="t.id">{{ t.name }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="付费类型">
+          <a-radio-group v-model:value="manualArticleType" type="button">
+            <a-radio value="free">免费类型</a-radio>
+            <a-radio value="paid">付费类型</a-radio>
+          </a-radio-group>
         </a-form-item>
       </a-form>
-
-      <!-- 生成进度 -->
-      <a-alert v-if="taskStatus" :type="taskStatus.status === 'success' ? 'success' : taskStatus.status === 'failed' ? 'error' : 'info'" style="margin-bottom: 16px;">
-        <template #title>
-          <span v-if="taskStatus.status === 'running'">文章生成中，请耐心等待（浏览器自动化需要较长时间）...</span>
-          <span v-else-if="taskStatus.status === 'success'">
-            生成成功！
-            <a-link @click="goToDetail(taskStatus.article_id)">查看文章详情 →</a-link>
-          </span>
-          <span v-else>生成失败：{{ taskStatus.message }}</span>
-        </template>
-      </a-alert>
-    </a-card>
-
-    <!-- 采集标题选择 -->
-    <a-card title="从采集标题中选择" :bordered="false" style="margin-top: 16px;">
-      <a-input-search
-        v-model="titleKeyword"
-        placeholder="搜索标题"
-        style="margin-bottom: 12px; width: 300px;"
-        @search="loadTitles"
-      />
-      <a-table :data="titles" :pagination="pagination" size="small" row-key="id" @page-change="onPageChange">
-        <template #columns>
-          <a-table-column title="ID" data-index="id" :width="60" />
-          <a-table-column title="标题" data-index="title" />
-          <a-table-column title="操作" :width="100">
-            <template #cell="{ record }">
-              <a-button size="mini" type="text" @click="selectTitle(record)">选择</a-button>
-            </template>
-          </a-table-column>
-        </template>
-      </a-table>
-    </a-card>
-
-    <!-- 最近生成的文章 -->
-    <a-card title="最近生成的文章" :bordered="false" style="margin-top: 16px;">
-      <a-table :data="recentArticles" :pagination="false" size="small" row-key="id">
-        <template #columns>
-          <a-table-column title="ID" data-index="id" :width="60" />
-          <a-table-column title="标题" data-index="title" />
-          <a-table-column title="平台" data-index="platform" :width="100">
-            <template #cell="{ record }">{{ platformNames[record.platform] || record.platform }}</template>
-          </a-table-column>
-          <a-table-column title="类型" data-index="article_type" :width="80">
-            <template #cell="{ record }">{{ record.article_type === 'paid' ? '付费' : '免费' }}</template>
-          </a-table-column>
-          <a-table-column title="生成时间" data-index="create_time" :width="160" />
-          <a-table-column title="操作" :width="100">
-            <template #cell="{ record }">
-              <a-button size="mini" type="text" @click="goToDetail(record.id)">详情</a-button>
-            </template>
-          </a-table-column>
-        </template>
-      </a-table>
-      <a-empty v-if="recentArticles.length === 0" description="暂无生成的文章" />
-    </a-card>
+    </a-modal>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { Message } from '@arco-design/web-vue'
-import { aiConfigApi, aiGenerateApi, spiderApi } from '@/api'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Message, Modal } from '@arco-design/web-vue'
+import {
+  IconPlus, IconDelete, IconPlayCircle
+} from '@arco-design/web-vue/es/icon'
+import { aiGenerateApi, aiConfigApi } from '@/api'
 
-const router = useRouter()
+const queue = ref([])
+const queueLoading = ref(false)
+const selectedQueueIds = ref([])
+const batchArticleTypeId = ref(null)
+const editingId = ref(null)
+const editingTitle = ref('')
+const editInputRef = ref(null)
 
-const platformNames = {
-  zhipu: '智谱AI',
-  yuanbao: '腾讯元宝',
-  doubao: '豆包'
-}
+const showAddModal = ref(false)
+const manualTitle = ref('')
+const manualArticleTypeId = ref(null)
+const manualArticleType = ref('free')
 
-// 表单
-const form = ref({
-  title: '',
-  platform: 'zhipu',
+const articleTypes = ref([])
+const accounts = ref([])
+const platformNames = { zhipu: '智谱AI', yuanbao: '腾讯元宝', doubao: '豆包' }
+
+const batchForm = ref({
+  platform: 'doubao',
   account_id: '',
-  article_type_id: null,
-  article_type: 'free',
-  apply_prompt: ''
+  generate_images: true
 })
 
-// 账号列表
-const accounts = ref([])
-const articleTypes = ref([])
+const batchStarting = ref(false)
+const batchRunning = ref(false)
+const batchTask = ref(null)
+let batchPollingTimer = null
 
-// 采集标题
-const titles = ref([])
-const titleKeyword = ref('')
-const pagination = ref({ current: 1, pageSize: 10, total: 0 })
+const isAllQueueSelected = computed(() => {
+  if (queue.value.length === 0) return false
+  return queue.value.every(item => selectedQueueIds.value.includes(item.id))
+})
 
-// 最近文章
-const recentArticles = ref([])
+const isQueueIndeterminate = computed(() => {
+  if (queue.value.length === 0) return false
+  const selectedCount = queue.value.filter(item => selectedQueueIds.value.includes(item.id)).length
+  return selectedCount > 0 && selectedCount < queue.value.length
+})
 
-// 生成状态
-const generating = ref(false)
-const taskStatus = ref(null)
-let statusTimer = null
+const batchStatusColor = computed(() => {
+  const status = batchTask.value?.status
+  if (status === 'running') return 'blue'
+  if (status === 'success') return 'green'
+  if (status === 'failed') return 'red'
+  if (status === 'partial') return 'orange'
+  return 'gray'
+})
 
-// 平台切换
-async function onPlatformChange() {
-  form.value.account_id = ''
-  await loadAccounts()
-}
+const batchStatusText = computed(() => {
+  const status = batchTask.value?.status
+  const map = { pending: '等待中', running: '运行中', success: '全部成功', failed: '全部失败', partial: '部分成功' }
+  return map[status] || status || '-'
+})
 
-// 加载账号
-async function loadAccounts() {
+const loadQueue = async () => {
+  queueLoading.value = true
   try {
-    const res = await aiConfigApi.getAccounts(form.value.platform)
-    accounts.value = res.list || []
+    const res = await aiGenerateApi.getQueue()
+    queue.value = res.data?.list || res.list || []
   } catch (e) {
-    console.error('加载账号失败', e)
+    Message.error('加载生成队列失败')
+  } finally {
+    queueLoading.value = false
   }
 }
 
-// 加载文章类型
-async function loadArticleTypes() {
+const loadArticleTypes = async () => {
   try {
     const res = await aiConfigApi.getArticleTypes()
-    articleTypes.value = res.list || []
+    articleTypes.value = res.data?.list || res.list || res.data || []
   } catch (e) {
     console.error('加载文章类型失败', e)
   }
 }
 
-// 加载设置
-async function loadSettings() {
+const loadAccounts = async () => {
   try {
-    const res = await aiConfigApi.getSettings()
-    if (res.default_ai_platform) form.value.platform = res.default_ai_platform
-    if (res.default_article_type) form.value.article_type = res.default_article_type
+    const res = await aiConfigApi.getAccounts(batchForm.value.platform)
+    accounts.value = res.data?.list || res.list || res.data || []
   } catch (e) {
-    console.error('加载设置失败', e)
+    console.error('加载账号失败', e)
   }
 }
 
-// 加载采集标题
-async function loadTitles() {
+const onPlatformChange = () => {
+  batchForm.value.account_id = ''
+  loadAccounts()
+}
+
+const handleQueueSelectAll = (checked) => {
+  if (checked) {
+    selectedQueueIds.value = [...new Set([...selectedQueueIds.value, ...queue.value.map(i => i.id)])]
+  } else {
+    const currentIds = new Set(queue.value.map(i => i.id))
+    selectedQueueIds.value = selectedQueueIds.value.filter(id => !currentIds.has(id))
+  }
+}
+
+const handleQueueRowSelect = (record, checked) => {
+  if (checked) {
+    if (!selectedQueueIds.value.includes(record.id)) {
+      selectedQueueIds.value.push(record.id)
+    }
+  } else {
+    selectedQueueIds.value = selectedQueueIds.value.filter(id => id !== record.id)
+  }
+}
+
+const startEdit = (record) => {
+  editingId.value = record.id
+  editingTitle.value = record.title
+}
+
+const saveEdit = async (record) => {
+  if (editingTitle.value && editingTitle.value !== record.title) {
+    try {
+      await aiGenerateApi.updateQueueItem(record.id, { title: editingTitle.value })
+      record.title = editingTitle.value
+      Message.success('标题已更新')
+    } catch (e) {
+      Message.error('更新标题失败')
+    }
+  }
+  editingId.value = null
+}
+
+const updateQueueItem = async (record) => {
   try {
-    const res = await spiderApi.list({
-      page: pagination.value.current,
-      pageSize: pagination.value.pageSize,
-      keyword: titleKeyword.value
+    await aiGenerateApi.updateQueueItem(record.id, { article_type_id: record.article_type_id })
+    Message.success('文章类型已更新')
+  } catch (e) {
+    Message.error('更新文章类型失败')
+  }
+}
+
+const removeQueueItem = (record) => {
+  Modal.confirm({
+    title: '移除确认',
+    content: `确定要从队列中移除"${record.title.slice(0, 20)}..."吗？`,
+    onOk: async () => {
+      try {
+        await aiGenerateApi.removeFromQueue(record.id)
+        queue.value = queue.value.filter(i => i.id !== record.id)
+        selectedQueueIds.value = selectedQueueIds.value.filter(id => id !== record.id)
+        Message.success('已移除')
+      } catch (e) {
+        Message.error('移除失败')
+      }
+    }
+  })
+}
+
+const batchUpdateType = async () => {
+  if (!batchArticleTypeId.value) {
+    Message.warning('请先选择文章类型')
+    return
+  }
+  try {
+    await aiGenerateApi.batchUpdateQueue({
+      ids: selectedQueueIds.value,
+      article_type_id: batchArticleTypeId.value
     })
-    titles.value = res.list || []
-    pagination.value.total = res.total || 0
+    queue.value.forEach(item => {
+      if (selectedQueueIds.value.includes(item.id)) {
+        item.article_type_id = batchArticleTypeId.value
+      }
+    })
+    Message.success(`已更新 ${selectedQueueIds.value.length} 项的文章类型`)
   } catch (e) {
-    console.error('加载标题失败', e)
+    Message.error('批量更新失败')
   }
 }
 
-function onPageChange(page) {
-  pagination.value.current = page
-  loadTitles()
+const batchDeleteQueue = () => {
+  Modal.confirm({
+    title: '批量删除确认',
+    content: `确定要删除选中的 ${selectedQueueIds.value.length} 项吗？`,
+    okButtonProps: { status: 'danger' },
+    onOk: async () => {
+      try {
+        await aiGenerateApi.batchDeleteQueue({ ids: selectedQueueIds.value })
+        queue.value = queue.value.filter(i => !selectedQueueIds.value.includes(i.id))
+        selectedQueueIds.value = []
+        Message.success('已删除')
+      } catch (e) {
+        Message.error('删除失败')
+      }
+    }
+  })
 }
 
-// 选择标题
-function selectTitle(record) {
-  form.value.title = record.title
-  Message.success('已选择标题')
+const clearQueue = () => {
+  Modal.confirm({
+    title: '清空队列确认',
+    content: '确定要清空整个生成队列吗？此操作不可恢复。',
+    okButtonProps: { status: 'danger' },
+    onOk: async () => {
+      try {
+        await aiGenerateApi.clearQueue()
+        queue.value = []
+        selectedQueueIds.value = []
+        Message.success('队列已清空')
+      } catch (e) {
+        Message.error('清空失败')
+      }
+    }
+  })
 }
 
-// 生成文章
-async function generateArticle() {
-  if (!form.value.title) {
+const addManualItem = async () => {
+  if (!manualTitle.value.trim()) {
     Message.warning('请输入文章标题')
     return
   }
-  if (!form.value.platform) {
-    Message.warning('请选择AI平台')
-    return
-  }
-  if (!form.value.account_id) {
-    Message.warning('请选择账号')
-    return
-  }
-
-  generating.value = true
-  taskStatus.value = { status: 'running', message: '' }
-
   try {
-    const res = await aiGenerateApi.generateArticle({
-      title: form.value.title,
-      platform: form.value.platform,
-      account_id: form.value.account_id,
-      article_type_id: form.value.article_type_id,
-      article_type: form.value.article_type,
-      apply_prompt: form.value.apply_prompt
+    await aiGenerateApi.addToQueue({
+      title: manualTitle.value.trim(),
+      article_type_id: manualArticleTypeId.value,
+      article_type: manualArticleType.value,
+      platform: batchForm.value.platform,
+      account_id: batchForm.value.account_id
+    })
+    Message.success('已添加到队列')
+    showAddModal.value = false
+    manualTitle.value = ''
+    manualArticleTypeId.value = null
+    manualArticleType.value = 'free'
+    loadQueue()
+  } catch (e) {
+    Message.error('添加失败')
+  }
+}
+
+const startBatchTask = async () => {
+  if (queue.value.length === 0) {
+    Message.warning('队列为空')
+    return
+  }
+  if (!batchForm.value.platform || !batchForm.value.account_id) {
+    Message.warning('请选择AI平台和账号')
+    return
+  }
+
+  batchStarting.value = true
+  try {
+    const pendingItems = queue.value.filter(i => i.status === 'pending' || i.status === 'failed')
+    const itemIds = pendingItems.map(i => i.id)
+
+    if (itemIds.length === 0) {
+      Message.warning('没有待生成的文章（全部已成功）')
+      return
+    }
+
+    const res = await aiGenerateApi.createBatchTask({
+      item_ids: itemIds,
+      platform: batchForm.value.platform,
+      account_id: batchForm.value.account_id,
+      generate_images: batchForm.value.generate_images
     })
 
-    // 轮询任务状态
-    const taskId = res.task_id
-    statusTimer = setInterval(async () => {
+    const batchId = res.data?.batch_id || res.batch_id
+    await aiGenerateApi.startBatchTask(batchId)
+
+    batchRunning.value = true
+    Message.success('批量任务已启动')
+    startBatchPolling(batchId)
+  } catch (e) {
+    Message.error(`启动失败：${e.response?.data?.detail || e.message}`)
+  } finally {
+    batchStarting.value = false
+  }
+}
+
+const stopBatchTask = async () => {
+  Modal.confirm({
+    title: '停止批量任务',
+    content: '确定要停止当前批量任务吗？正在生成的文章可能会中断。',
+    okButtonProps: { status: 'danger' },
+    onOk: async () => {
       try {
-        const status = await aiGenerateApi.getGenerateStatus(taskId)
-        taskStatus.value = status
-        if (status.status === 'success' || status.status === 'failed') {
-          clearInterval(statusTimer)
-          generating.value = false
-          loadRecentArticles()
-          if (status.status === 'success') {
-            Message.success('文章生成成功！')
-          } else {
-            Message.error('文章生成失败：' + status.message)
-          }
-        }
+        await aiGenerateApi.stopBatchTask()
+        batchRunning.value = false
+        Message.success('停止信号已发送')
       } catch (e) {
-        console.error('查询任务状态失败', e)
+        Message.error('停止失败')
       }
-    }, 5000)
-
-  } catch (e) {
-    generating.value = false
-    taskStatus.value = { status: 'failed', message: e.message || '生成失败' }
-    Message.error('生成失败')
-  }
+    }
+  })
 }
 
-// 重置表单
-function resetForm() {
-  form.value = {
-    title: '',
-    platform: 'zhipu',
-    account_id: '',
-    article_type_id: null,
-    article_type: 'free',
-    apply_prompt: '',
-    chapter_count: 10
+const startBatchPolling = (batchId) => {
+  if (batchPollingTimer) {
+    clearInterval(batchPollingTimer)
   }
-  taskStatus.value = null
-  loadAccounts()
+  batchPollingTimer = setInterval(async () => {
+    try {
+      const res = await aiGenerateApi.getBatchTaskStatus(batchId)
+      batchTask.value = res.data?.task || res.task
+      const engine = res.data?.engine || res.engine
+
+      if (engine?.is_running) {
+        batchRunning.value = true
+      } else {
+        batchRunning.value = false
+        clearInterval(batchPollingTimer)
+        batchPollingTimer = null
+        loadQueue()
+        const status = batchTask.value?.status
+        if (status === 'success') {
+          Message.success('批量任务全部完成！')
+        } else if (status === 'partial') {
+          Message.warning(`批量任务部分完成，成功${batchTask.value?.success_count}篇，失败${batchTask.value?.failed_count}篇`)
+        } else if (status === 'failed') {
+          Message.error('批量任务全部失败')
+        }
+      }
+    } catch (e) {
+      console.error('轮询批量任务状态失败', e)
+    }
+  }, 5000)
 }
 
-// 跳转详情
-function goToDetail(id) {
-  router.push(`/article/detail/${id}`)
+const queueStatusColor = (status) => {
+  const map = { pending: 'gray', running: 'blue', success: 'green', failed: 'red', skipped: 'orange' }
+  return map[status] || 'gray'
 }
 
-// 加载最近文章
-async function loadRecentArticles() {
-  try {
-    const res = await aiGenerateApi.getArticles({ page: 1, pageSize: 10 })
-    recentArticles.value = res.list || []
-  } catch (e) {
-    console.error('加载最近文章失败', e)
-  }
+const queueStatusText = (status) => {
+  const map = { pending: '待生成', running: '生成中', success: '已成功', failed: '失败', skipped: '已跳过' }
+  return map[status] || status
 }
 
 onMounted(() => {
-  loadSettings()
-  loadAccounts()
+  loadQueue()
   loadArticleTypes()
-  loadTitles()
-  loadRecentArticles()
+  loadAccounts()
+})
+
+onUnmounted(() => {
+  if (batchPollingTimer) {
+    clearInterval(batchPollingTimer)
+  }
 })
 </script>
 
 <style scoped>
 .article-generate-page {
-  padding: 16px;
+  padding: 0;
+}
+
+.batch-bar {
+  background: #e8f3ff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 </style>

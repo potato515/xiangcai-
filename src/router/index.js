@@ -19,6 +19,18 @@ const routes = [
         meta: { title: '工作台', icon: 'icon-dashboard' }
       },
       {
+        path: 'title-spider',
+        name: 'TitleSpider',
+        component: () => import('@/views/title-spider/index.vue'),
+        meta: { title: '标题采集', icon: 'icon-search' }
+      },
+      {
+        path: 'article-generate',
+        name: 'ArticleGenerate',
+        component: () => import('@/views/article-generate/index.vue'),
+        meta: { title: '文章生成', icon: 'icon-edit' }
+      },
+      {
         path: 'article',
         name: 'Article',
         component: () => import('@/views/article/list.vue'),
@@ -37,22 +49,10 @@ const routes = [
         meta: { title: '批量导入', hidden: true }
       },
       {
-        path: 'article-generate',
-        name: 'ArticleGenerate',
-        component: () => import('@/views/article-generate/index.vue'),
-        meta: { title: '文章生成', icon: 'icon-edit' }
-      },
-      {
         path: 'ai-config',
         name: 'AIConfig',
         component: () => import('@/views/ai-config/index.vue'),
         meta: { title: 'AI配置', icon: 'icon-settings' }
-      },
-      {
-        path: 'title-spider',
-        name: 'TitleSpider',
-        component: () => import('@/views/title-spider/index.vue'),
-        meta: { title: '标题采集', icon: 'icon-search' }
       },
       {
         path: 'account',

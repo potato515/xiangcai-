@@ -66,6 +66,9 @@
           <a-button size="small" status="primary" @click="openRewriteModal">
             <template #icon><icon-edit /></template>豆包AI重写标题
           </a-button>
+          <a-button size="small" status="success" @click="openAddToQueueModal">
+            <template #icon><icon-plus /></template>加入生成列表
+          </a-button>
           <a-button size="small" status="success" @click="batchMarkUsed(true)">
             <template #icon><icon-check-circle /></template>批量标记已用
           </a-button>
@@ -99,13 +102,24 @@
         :pagination="false"
         :bordered="{ cell: true }"
         row-key="id"
-        :row-selection="{
-          selectedRowKeys: selectedIds,
-          showCheckedAll: true,
-          onChange: handleSelectionChange
-        }"
       >
         <template #columns>
+          <!-- 手动多选框列 -->
+          <a-table-column title="" :width="50" align="center">
+            <template #header>
+              <a-checkbox
+                :model-value="isAllSelected"
+                :indeterminate="isIndeterminate"
+                @change="handleSelectAll"
+              />
+            </template>
+            <template #cell="{ record }">
+              <a-checkbox
+                :model-value="selectedIds.includes(record.id)"
+                @change="(checked) => handleRowSelect(record, checked)"
+              />
+            </template>
+          </a-table-column>
           <a-table-column title="ID" data-index="id" :width="70" />
           <a-table-column title="标题" data-index="title" :width="360">
             <template #cell="{ record }">
@@ -198,6 +212,28 @@
         </div>
       </div>
     </a-modal>
+
+    <!-- 加入生成列表弹窗 -->
+    <a-modal v-model:visible="addToQueueModalVisible" title="加入文章生成列表" @ok="addToQueue" width="500px">
+      <a-alert type="info" style="margin-bottom: 16px;">
+        <template #content>
+          将选中的 <strong>{{ selectedIds.length }}</strong> 个标题加入文章生成队列，可在「文章生成」页面批量生成文章。
+        </template>
+      </a-alert>
+      <a-form layout="vertical">
+        <a-form-item label="文章类型（可选，不选则使用系统默认类型）">
+          <a-select v-model:value="queueArticleTypeId" allow-clear placeholder="不选择则使用默认文章类型" style="width: 100%;">
+            <a-option v-for="t in articleTypes" :key="t.id" :value="t.id">{{ t.name }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="付费类型">
+          <a-radio-group v-model:value="queueArticleType" type="button">
+            <a-radio value="free">免费类型</a-radio>
+            <a-radio value="paid">付费类型</a-radio>
+          </a-radio-group>
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
@@ -207,13 +243,13 @@ import { Message, Modal } from '@arco-design/web-vue'
 import {
   IconSearch, IconPlayCircle, IconStop, IconRefresh,
   IconDownload, IconDelete, IconCheckCircle, IconClockCircle,
-  IconFile, IconUndo, IconEdit
+  IconFile, IconUndo, IconEdit, IconPlus
 } from '@arco-design/web-vue/es/icon'
 import PageCard from '@/components/common/PageCard.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import LogPanel from '@/components/common/LogPanel.vue'
 import { useSpiderStore } from '@/stores/spider'
-import { spiderApi } from '@/api'
+import { spiderApi, aiGenerateApi, aiConfigApi } from '@/api'
 
 const spiderStore = useSpiderStore()
 
@@ -235,6 +271,13 @@ const rewriteInstruction = ref('')
 const newTitles = ref([])
 const selectedNewTitles = ref([])
 const selectAllNewTitles = ref(false)
+
+// 加入生成列表相关
+const addToQueueModalVisible = ref(false)
+const queueArticleTypeId = ref(null)
+const queueArticleType = ref('free')
+const articleTypes = ref([])
+const addingToQueue = ref(false)
 
 const filter = reactive({ minRead: undefined, category: undefined, used: undefined, keyword: '' })
 
@@ -372,6 +415,40 @@ const handleSelectionChange = (keys) => {
   selectedIds.value = keys
 }
 
+// 手动多选框相关计算属性
+const isAllSelected = computed(() => {
+  if (tableData.value.length === 0) return false
+  return tableData.value.every(t => selectedIds.value.includes(t.id))
+})
+
+const isIndeterminate = computed(() => {
+  if (tableData.value.length === 0) return false
+  const selectedCount = tableData.value.filter(t => selectedIds.value.includes(t.id)).length
+  return selectedCount > 0 && selectedCount < tableData.value.length
+})
+
+const handleSelectAll = (checked) => {
+  if (checked) {
+    // 全选当前页
+    const currentIds = tableData.value.map(t => t.id)
+    selectedIds.value = [...new Set([...selectedIds.value, ...currentIds])]
+  } else {
+    // 取消全选当前页
+    const currentIds = new Set(tableData.value.map(t => t.id))
+    selectedIds.value = selectedIds.value.filter(id => !currentIds.has(id))
+  }
+}
+
+const handleRowSelect = (record, checked) => {
+  if (checked) {
+    if (!selectedIds.value.includes(record.id)) {
+      selectedIds.value.push(record.id)
+    }
+  } else {
+    selectedIds.value = selectedIds.value.filter(id => id !== record.id)
+  }
+}
+
 const batchMarkUsed = async (used) => {
   try {
     await spiderApi.batchMark({ ids: selectedIds.value, used })
@@ -479,6 +556,55 @@ const openRewriteModal = () => {
   rewriteInstruction.value = ''
 }
 
+// 加入生成列表相关
+const loadArticleTypes = async () => {
+  try {
+    const res = await aiConfigApi.getArticleTypes()
+    articleTypes.value = res.data?.list || res.list || res.data || []
+  } catch (e) {
+    console.error('加载文章类型失败', e)
+  }
+}
+
+const openAddToQueueModal = () => {
+  if (selectedIds.value.length === 0) {
+    Message.warning('请先选择要加入生成列表的标题')
+    return
+  }
+  queueArticleTypeId.value = null
+  queueArticleType.value = 'free'
+  addToQueueModalVisible.value = true
+}
+
+const addToQueue = async () => {
+  if (selectedIds.value.length === 0) {
+    Message.warning('请先选择标题')
+    return
+  }
+
+  addingToQueue.value = true
+  try {
+    // 获取选中的标题
+    const selectedTitles = tableData.value.filter(t => selectedIds.value.includes(t.id))
+    const items = selectedTitles.map(t => ({
+      title: t.title,
+      article_type_id: queueArticleTypeId.value,
+      article_type: queueArticleType.value
+    }))
+
+    const res = await aiGenerateApi.batchAddToQueue({ items })
+    const addedCount = res.data?.added_count || res.added_count || items.length
+
+    Message.success(`已成功将 ${addedCount} 个标题加入文章生成列表`)
+    addToQueueModalVisible.value = false
+    selectedIds.value = []
+  } catch (e) {
+    Message.error(`加入生成列表失败：${e.response?.data?.detail || e.message}`)
+  } finally {
+    addingToQueue.value = false
+  }
+}
+
 const startRewrite = async () => {
   if (selectedIds.value.length === 0) {
     Message.warning('请先选择要重写的标题')
@@ -544,6 +670,7 @@ const copyNewTitle = (title) => {
 
 onMounted(() => {
   loadData()
+  loadArticleTypes()
   // 页面加载时检查采集状态，如果正在运行则启动轮询
   spiderApi.status({ silent: true }).then(status => {
     if (status.running) {

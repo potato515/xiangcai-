@@ -279,3 +279,195 @@ async def save_format_settings_endpoint(settings: dict):
     from services.article_formatter import save_format_settings
     save_format_settings(settings)
     return {"status": "ok"}
+
+
+# ==================== 文章生成队列（待生成列表） ====================
+
+class AddToQueueReq(BaseModel):
+    title: str
+    article_type_id: Optional[int] = None
+    article_type: Optional[str] = "free"
+    apply_prompt: Optional[str] = ""
+    platform: Optional[str] = "doubao"
+    account_id: Optional[str] = ""
+
+
+class BatchAddToQueueReq(BaseModel):
+    items: List[dict]  # [{title, article_type_id, article_type, apply_prompt}]
+    platform: Optional[str] = "doubao"
+    account_id: Optional[str] = ""
+
+
+class UpdateQueueItemReq(BaseModel):
+    title: Optional[str] = None
+    article_type_id: Optional[int] = None
+    article_type: Optional[str] = None
+    apply_prompt: Optional[str] = None
+
+
+class BatchUpdateQueueReq(BaseModel):
+    ids: List[int]
+    article_type_id: Optional[int] = None
+    article_type: Optional[str] = None
+
+
+@router.get("/queue")
+async def get_generate_queue():
+    """获取文章生成队列（待生成列表）"""
+    from services.batch_task_engine import batch_engine
+    return {"list": batch_engine.load_generate_queue(), "total": len(batch_engine.load_generate_queue())}
+
+
+@router.post("/queue/add")
+async def add_to_queue(req: AddToQueueReq):
+    """添加文章到生成队列"""
+    from services.batch_task_engine import batch_engine
+    item = batch_engine.add_to_queue(
+        title=req.title,
+        article_type_id=req.article_type_id,
+        article_type=req.article_type,
+        apply_prompt=req.apply_prompt,
+        platform=req.platform,
+        account_id=req.account_id
+    )
+    return {"status": "ok", "item": item}
+
+
+@router.post("/queue/batch-add")
+async def batch_add_to_queue(req: BatchAddToQueueReq):
+    """批量添加文章到生成队列"""
+    from services.batch_task_engine import batch_engine
+    added = []
+    for item_data in req.items:
+        item = batch_engine.add_to_queue(
+            title=item_data.get("title", ""),
+            article_type_id=item_data.get("article_type_id"),
+            article_type=item_data.get("article_type", "free"),
+            apply_prompt=item_data.get("apply_prompt", ""),
+            platform=req.platform,
+            account_id=req.account_id
+        )
+        added.append(item)
+    return {"status": "ok", "added_count": len(added), "items": added}
+
+
+@router.put("/queue/{item_id}")
+async def update_queue_item(item_id: int, req: UpdateQueueItemReq):
+    """更新队列项"""
+    from services.batch_task_engine import batch_engine
+    update_data = {k: v for k, v in req.dict().items() if v is not None}
+    batch_engine.update_queue_item(item_id, **update_data)
+    return {"status": "ok"}
+
+
+@router.post("/queue/batch-update")
+async def batch_update_queue(req: BatchUpdateQueueReq):
+    """批量更新队列项（文章类型等）"""
+    from services.batch_task_engine import batch_engine
+    update_data = {}
+    if req.article_type_id is not None:
+        update_data["article_type_id"] = req.article_type_id
+    if req.article_type is not None:
+        update_data["article_type"] = req.article_type
+    for item_id in req.ids:
+        batch_engine.update_queue_item(item_id, **update_data)
+    return {"status": "ok", "updated_count": len(req.ids)}
+
+
+@router.delete("/queue/{item_id}")
+async def remove_from_queue(item_id: int):
+    """从队列中移除"""
+    from services.batch_task_engine import batch_engine
+    batch_engine.remove_from_queue(item_id)
+    return {"status": "ok"}
+
+
+@router.post("/queue/batch-delete")
+async def batch_delete_queue(req: dict):
+    """批量从队列中移除"""
+    from services.batch_task_engine import batch_engine
+    ids = req.get("ids", [])
+    for item_id in ids:
+        batch_engine.remove_from_queue(item_id)
+    return {"status": "ok", "deleted_count": len(ids)}
+
+
+@router.post("/queue/clear")
+async def clear_queue():
+    """清空队列"""
+    from services.batch_task_engine import batch_engine
+    batch_engine.clear_queue()
+    return {"status": "ok"}
+
+
+# ==================== 批量生成任务 ====================
+
+class CreateBatchTaskReq(BaseModel):
+    item_ids: List[int]
+    platform: str
+    account_id: str
+    generate_images: Optional[bool] = True
+
+
+@router.post("/batch/create")
+async def create_batch_task(req: CreateBatchTaskReq):
+    """创建批量生成任务"""
+    from services.batch_task_engine import batch_engine
+    task = batch_engine.create_batch_task(
+        item_ids=req.item_ids,
+        platform=req.platform,
+        account_id=req.account_id,
+        generate_images=req.generate_images
+    )
+    if not task:
+        raise HTTPException(status_code=400, detail="创建批量任务失败，队列中没有找到指定项")
+    return {"status": "ok", "batch_id": task["batch_id"], "task": task}
+
+
+@router.post("/batch/start/{batch_id}")
+async def start_batch_task(batch_id: int):
+    """启动批量生成任务"""
+    from services.batch_task_engine import batch_engine
+    if batch_engine.is_running:
+        raise HTTPException(status_code=400, detail="已有批量任务正在运行，请等待完成或停止后再启动")
+    success = batch_engine.start_batch_task(batch_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="启动批量任务失败")
+    return {"status": "ok", "message": "批量任务已启动"}
+
+
+@router.post("/batch/stop")
+async def stop_batch_task():
+    """停止批量生成任务"""
+    from services.batch_task_engine import batch_engine
+    batch_engine.stop_batch_task()
+    return {"status": "ok", "message": "批量任务停止信号已发送"}
+
+
+@router.get("/batch/status/{batch_id}")
+async def get_batch_task_status(batch_id: int):
+    """获取批量任务状态"""
+    from services.batch_task_engine import batch_engine
+    task = batch_engine.get_batch_task(batch_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="批量任务不存在")
+    engine_status = batch_engine.get_status()
+    return {
+        "task": task,
+        "engine": engine_status
+    }
+
+
+@router.get("/batch/list")
+async def list_batch_tasks():
+    """获取批量任务列表"""
+    from services.batch_task_engine import batch_engine
+    tasks = batch_engine.load_batch_tasks()
+    return {"list": tasks, "total": len(tasks)}
+
+
+@router.get("/batch/engine-status")
+async def get_batch_engine_status():
+    """获取批量任务引擎状态"""
+    from services.batch_task_engine import batch_engine
+    return batch_engine.get_status()

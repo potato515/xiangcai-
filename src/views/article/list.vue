@@ -233,8 +233,47 @@ const batchRegenerate = () => {
   })
 }
 
-const batchExport = () => {
-  Message.success(`已开始导出 ${selectedIds.value.length} 篇文章为Word`)
+const batchExport = async () => {
+  if (selectedIds.value.length === 0) {
+    Message.warning('请先选择要导出的文章')
+    return
+  }
+
+  const total = selectedIds.value.length
+  let success = 0
+  let failed = 0
+
+  Message.loading({ content: `正在导出 ${total} 篇文章...`, key: 'batch-export', duration: 0 })
+
+  for (let i = 0; i < selectedIds.value.length; i++) {
+    const id = selectedIds.value[i]
+    try {
+      const res = await aiGenerateApi.exportArticle(id)
+      if (res.download_url) {
+        const link = document.createElement('a')
+        link.href = res.download_url
+        link.download = res.filename
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      }
+      success++
+      // 每篇导出间隔500ms，避免浏览器拦截多个下载
+      await new Promise(resolve => setTimeout(resolve, 500))
+    } catch (e) {
+      failed++
+      console.error(`导出文章 #${id} 失败`, e)
+    }
+  }
+
+  Message.clear('batch-export')
+
+  if (failed === 0) {
+    Message.success(`成功导出 ${success} 篇文章为Word`)
+  } else {
+    Message.warning(`导出完成：成功 ${success} 篇，失败 ${failed} 篇`)
+  }
+
   clearSelection()
 }
 
