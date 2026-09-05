@@ -1,0 +1,51 @@
+{
+  "article_types": [],
+  "default_article_prompt": "",
+  "image_prompt": "",
+  "ai_accounts": {
+    "zhipu": [
+      {
+        "id": 1,
+        "name": "智谱-AI",
+        "account_id": "18732908870",
+        "model": "DeepSeek",
+        "remark": "",
+        "create_time": "2026-09-04 16:54:29"
+      }
+    ],
+    "yuanbao": [
+      {
+        "id": 1,
+        "name": "元宝",
+        "account_id": "18732908870",
+        "model": "Hunyuan",
+        "remark": "",
+        "create_time": "2026-09-04 16:54:52"
+      }
+    ],
+    "doubao": [
+      {
+        "id": 1,
+        "name": "豆包-AI",
+        "account_id": "18732908870",
+        "model": "DeepSeek",
+        "remark": "",
+        "create_time": "2026-09-04 16:55:09"
+      },
+      {
+        "id": 2,
+        "name": "豆包-AI2",
+        "account_id": "15169030772",
+        "model": "DeepSeek",
+        "remark": "",
+        "create_time": "2026-09-04 16:55:52"
+      }
+    ]
+  },
+  "settings": {
+    "default_chapter_count": 10,
+    "default_image_count": 3,
+    "default_ai_platform": "zhipu",
+    "default_article_type": "free"
+  }
+}
