@@ -3,10 +3,17 @@
 同步调用模式：启动浏览器→执行操作→关闭浏览器
 """
 import os
+import sys
 import json
 import time
 import traceback
+import asyncio
 from datetime import datetime
+
+# Windows上必须使用ProactorEventLoop才能支持子进程（Playwright需要创建浏览器子进程）
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from playwright.sync_api import sync_playwright, ViewportSize
 
 
@@ -99,6 +106,22 @@ class BrowserBase:
     def initialize_browser(self):
         """初始化Playwright浏览器"""
         try:
+            # ============================================================
+            # 【关键】Windows上必须使用ProactorEventLoop才能支持子进程
+            # Playwright需要创建子进程启动浏览器
+            # 必须在sync_playwright()之前设置，并且清除当前线程的事件循环
+            # ============================================================
+            if sys.platform == 'win32':
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                # 清除当前线程可能存在的事件循环，避免Playwright检测到
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop and not loop.is_closed():
+                        loop.close()
+                except:
+                    pass
+                asyncio.set_event_loop(None)
+
             self.playwright = sync_playwright().start()
             viewport = ViewportSize(width=1440, height=768)
 

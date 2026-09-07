@@ -38,8 +38,8 @@ if errorlevel 1 (
 echo.
 echo [3/3] Starting FastAPI server...
 echo.
-echo Server URL:  http://127.0.0.1:8090
-echo API Docs:    http://127.0.0.1:8090/docs
+echo Server URL:  http://127.0.0.1:9527
+echo API Docs:    http://127.0.0.1:9527/docs
 echo.
 echo Press Ctrl+C to stop
 echo ========================================

@@ -99,14 +99,16 @@
       <a-table
         :data="tableData"
         :loading="loading"
-        :pagination="false"
+        :pagination="paginationConfig"
         :bordered="{ cell: true }"
         row-key="id"
+        @page-change="handlePageChange"
+        @page-size-change="handlePageSizeChange"
       >
         <template #columns>
           <!-- 手动多选框列 -->
-          <a-table-column title="" :width="50" align="center">
-            <template #header>
+          <a-table-column :width="50" align="center">
+            <template #title>
               <a-checkbox
                 :model-value="isAllSelected"
                 :indeterminate="isIndeterminate"
@@ -154,10 +156,6 @@
           </a-table-column>
         </template>
       </a-table>
-
-      <div class="pagination">
-        <a-pagination :total="total" :current="currentPage" :page-size="pageSize" @change="handlePageChange" show-total />
-      </div>
     </PageCard>
 
     <!-- 采集日志 -->
@@ -170,15 +168,16 @@
     <a-modal
       v-model:visible="rewriteModalVisible"
       title="豆包AI批量重写标题"
-      :width="800"
+      :width="900"
       :mask-closable="false"
-      @ok="addSelectedNewTitles"
-      ok-text="添加选中标题到列表"
-      cancel-text="关闭"
+      :footer="false"
     >
       <div style="margin-bottom:16px">
         <a-alert type="info" style="margin-bottom:12px">
-          已选择 <strong>{{ selectedIds.length }}</strong> 个原始标题，豆包AI将学习这些标题的爆款特征，重新仿写新标题。
+          <template #content>
+            已选择 <strong>{{ selectedIds.length }}</strong> 个原始标题，豆包AI将学习这些标题的爆款特征，重新仿写新标题。<br/>
+            <span style="color:#d46b08">💡 AI生成的标题会用《》符号包裹，并标记为"AI生成"，方便与原始采集标题区分。</span>
+          </template>
         </a-alert>
         <a-form-item label="重写指令（可自定义，留空使用默认指令）">
           <a-textarea
@@ -195,20 +194,84 @@
         </a-space>
       </div>
 
-      <div v-if="newTitles.length > 0" style="border-top:1px solid #e5e6eb;padding-top:16px">
+      <!-- 分组重写结果展示 -->
+      <div v-if="rewriteGroups.length > 0" style="border-top:1px solid #e5e6eb;padding-top:16px">
         <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-          <span>AI生成的新标题（共 <strong style="color:#165dff">{{ newTitles.length }}</strong> 个，勾选后可添加到列表或生成文章）</span>
+          <span>AI生成结果（共 <strong style="color:#165dff">{{ rewriteGroups.length }}</strong> 个分组，已勾选 <strong style="color:#00b42a">{{ getSelectedRewriteCount() }}</strong> 个标题）</span>
           <a-space>
-            <a-checkbox v-model="selectAllNewTitles" @change="toggleSelectAllNewTitles">全选</a-checkbox>
-            <a-button size="small" status="warning" @click="generateArticleFromNewTitles">用选中标题生成文章</a-button>
+            <a-button type="primary" size="small" :loading="addingRewriteToQueue" @click="addSelectedRewriteToQueue">
+              将选中标题加入文章生成列表
+            </a-button>
           </a-space>
         </div>
-        <div style="max-height:400px;overflow-y:auto;border:1px solid #e5e6eb;border-radius:4px;padding:8px">
-          <div v-for="(title, index) in newTitles" :key="index" style="padding:8px;border-bottom:1px solid #f2f3f5;display:flex;align-items:flex-start;gap:8px">
-            <a-checkbox v-model="selectedNewTitles[index]" style="margin-top:2px" />
-            <span style="flex:1">{{ index + 1 }}. {{ title }}</span>
-            <a-button type="text" size="small" @click="copyNewTitle(title)">复制</a-button>
+
+        <div style="max-height:500px;overflow-y:auto">
+          <div v-for="(group, gIndex) in rewriteGroups" :key="gIndex" style="margin-bottom:16px;border:1px solid #e5e6eb;border-radius:6px;overflow:hidden">
+            <!-- 分组头部：原始标题 -->
+            <div style="background:#f7f8fa;padding:12px 16px;border-bottom:1px solid #e5e6eb">
+              <div style="display:flex;align-items:flex-start;gap:8px">
+                <span style="background:#165dff;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;flex-shrink:0">标题 {{ gIndex + 1 }}</span>
+                <div style="flex:1">
+                  <div :style="{color: isOriginalTitleDisabled(gIndex) ? '#86909c' : '#1d2129', textDecoration: isOriginalTitleDisabled(gIndex) ? 'line-through' : 'none', fontWeight:500}">
+                    {{ group.original_title }}
+                  </div>
+                  <div v-if="isOriginalTitleDisabled(gIndex)" style="color:#ff7d00;font-size:12px;margin-top:4px">
+                    ⚠️ 已有仿写标题被选中，原标题标记为不可使用
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 爆点分析 -->
+            <div v-if="group.analysis" style="background:#fffbe6;padding:10px 16px;border-bottom:1px solid #ffe58f">
+              <div style="color:#d46b08;font-size:12px;font-weight:500;margin-bottom:4px">💡 爆点分析</div>
+              <div style="color:#874d00;font-size:13px;line-height:1.6">{{ group.analysis }}</div>
+            </div>
+
+            <!-- 仿写标题列表 -->
+            <div style="background:#fff;padding:8px 16px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="color:#4e5969;font-size:13px">仿写标题（{{ group.new_titles.length }} 条）</span>
+                <a-checkbox :model-value="isGroupAllSelected(gIndex)" @change="(checked) => toggleGroupSelectAll(gIndex, checked)">
+                  全选
+                </a-checkbox>
+              </div>
+              <div v-for="(title, tIndex) in group.new_titles" :key="tIndex" style="padding:8px 0;border-bottom:1px solid #f2f3f5;display:flex;align-items:flex-start;gap:8px">
+                <a-checkbox :model-value="group.selected.has(tIndex)" @change="() => toggleRewriteTitle(gIndex, tIndex)" style="margin-top:2px" />
+                <span style="flex:1;font-size:13px;line-height:1.5">
+                  <span style="display:inline-block;background:#fff7e8;color:#d46b08;padding:1px 6px;border-radius:3px;font-size:11px;margin-right:6px;vertical-align:middle">AI生成</span>
+                  <span style="color:#d46b08;font-weight:500">{{ tIndex + 1 }}. {{ title }}</span>
+                </span>
+                <a-button type="text" size="small" @click="copyRewriteTitle(title)">复制</a-button>
+              </div>
+            </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div v-if="rewriteGroups.length > 0" style="border-top:1px solid #e5e6eb;padding-top:16px;margin-top:16px">
+        <a-form layout="inline" style="margin-bottom:16px">
+          <a-form-item label="文章类型（应用到所有选中标题）">
+            <a-select v-model:value="rewriteArticleTypeId" allow-clear placeholder="不选择则使用默认文章类型" style="width:200px">
+              <a-option v-for="t in articleTypes" :key="t.id" :value="t.id">{{ t.name }}</a-option>
+            </a-select>
+          </a-form-item>
+          <a-form-item label="付费类型">
+            <a-radio-group v-model:value="rewriteArticleType" type="button">
+              <a-radio value="free">免费类型</a-radio>
+              <a-radio value="paid">付费类型</a-radio>
+            </a-radio-group>
+          </a-form-item>
+        </a-form>
+        <div style="text-align:right">
+          <a-space>
+            <span style="color:#4e5969">已勾选 <strong style="color:#00b42a">{{ getSelectedRewriteCount() }}</strong> 个标题</span>
+            <a-button @click="rewriteModalVisible = false">关闭</a-button>
+            <a-button type="primary" :loading="addingRewriteToQueue" @click="addSelectedRewriteToQueue">
+              将选中标题加入文章生成列表
+            </a-button>
+          </a-space>
         </div>
       </div>
     </a-modal>
@@ -264,13 +327,29 @@ let statusPollingTimer = null
 let lastRunningState = false
 let pollingFailCount = 0
 
+// 分页相关计算属性和方法
+const paginationConfig = computed(() => ({
+  current: currentPage.value,
+  pageSize: pageSize.value,
+  total: total.value,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+
 // 标题重写相关
 const rewriteModalVisible = ref(false)
 const rewriting = ref(false)
 const rewriteInstruction = ref('')
-const newTitles = ref([])
+const newTitles = ref([])  // 保留兼容，实际使用rewriteGroups
 const selectedNewTitles = ref([])
 const selectAllNewTitles = ref(false)
+// 分组重写结果
+const rewriteGroups = ref([])  // [{original_title, analysis, new_titles:[], selected: Set}]
+const addingRewriteToQueue = ref(false)
+// 重写标题加入生成列表的配置
+const rewriteArticleTypeId = ref(null)
+const rewriteArticleType = ref('free')
 
 // 加入生成列表相关
 const addToQueueModalVisible = ref(false)
@@ -410,12 +489,13 @@ const stopSpider = async () => {
 const handleSearch = () => { currentPage.value = 1; loadData() }
 const resetFilter = () => { filter.minRead = undefined; filter.category = undefined; filter.used = undefined; filter.keyword = ''; currentPage.value = 1; loadData() }
 const handlePageChange = (page) => { currentPage.value = page; loadData() }
+const handlePageSizeChange = (size) => { pageSize.value = size; currentPage.value = 1; loadData() }
 
 const handleSelectionChange = (keys) => {
   selectedIds.value = keys
 }
 
-// 手动多选框相关计算属性
+// 手动多选框相关计算属性（只针对当前页）
 const isAllSelected = computed(() => {
   if (tableData.value.length === 0) return false
   return tableData.value.every(t => selectedIds.value.includes(t.id))
@@ -553,7 +633,14 @@ const openRewriteModal = () => {
   newTitles.value = []
   selectedNewTitles.value = []
   selectAllNewTitles.value = false
+  rewriteGroups.value = []
   rewriteInstruction.value = ''
+  rewriteArticleTypeId.value = null
+  rewriteArticleType.value = 'free'
+  // 确保文章类型列表已加载
+  if (articleTypes.value.length === 0) {
+    loadArticleTypes()
+  }
 }
 
 // 加入生成列表相关
@@ -614,6 +701,7 @@ const startRewrite = async () => {
   rewriting.value = true
   newTitles.value = []
   selectedNewTitles.value = []
+  rewriteGroups.value = []
 
   try {
     const res = await spiderApi.rewrite({
@@ -621,11 +709,23 @@ const startRewrite = async () => {
       rewrite_instruction: rewriteInstruction.value
     })
 
-    if (res.status === 'ok' || res.data?.status === 'ok') {
-      const titles = res.new_titles || res.data?.new_titles || []
-      newTitles.value = titles
-      selectedNewTitles.value = new Array(titles.length).fill(false)
-      Message.success(`AI重写完成，共生成 ${titles.length} 个新标题`)
+    const data = res.data || res
+    if (data.status === 'ok') {
+      // 解析分组数据
+      const groups = data.groups || []
+      rewriteGroups.value = groups.map(g => ({
+        original_title: g.original_title,
+        analysis: g.analysis,
+        new_titles: g.new_titles || [],
+        selected: new Set()  // 存储选中的标题索引
+      }))
+      // 兼容旧格式
+      const allTitles = data.all_new_titles || data.new_titles || []
+      newTitles.value = allTitles
+      selectedNewTitles.value = new Array(allTitles.length).fill(false)
+
+      const total = rewriteGroups.value.reduce((sum, g) => sum + g.new_titles.length, 0)
+      Message.success(`AI重写完成，共生成 ${total} 个新标题（${rewriteGroups.value.length} 个分组）`)
     } else {
       Message.error('标题重写失败')
     }
@@ -638,6 +738,120 @@ const startRewrite = async () => {
 
 const toggleSelectAllNewTitles = (checked) => {
   selectedNewTitles.value = new Array(newTitles.value.length).fill(checked)
+}
+
+// ==================== 分组重写相关方法 ====================
+
+// 勾选/取消某个仿写标题
+const toggleRewriteTitle = (groupIndex, titleIndex) => {
+  const group = rewriteGroups.value[groupIndex]
+  if (!group) return
+  if (group.selected.has(titleIndex)) {
+    group.selected.delete(titleIndex)
+  } else {
+    group.selected.add(titleIndex)
+  }
+  // 触发响应式更新
+  rewriteGroups.value = [...rewriteGroups.value]
+}
+
+// 判断分组是否全选
+const isGroupAllSelected = (groupIndex) => {
+  const group = rewriteGroups.value[groupIndex]
+  if (!group || group.new_titles.length === 0) return false
+  return group.selected.size === group.new_titles.length
+}
+
+// 分组全选/取消全选
+const toggleGroupSelectAll = (groupIndex, checked) => {
+  const group = rewriteGroups.value[groupIndex]
+  if (!group) return
+  if (checked) {
+    group.new_titles.forEach((_, i) => group.selected.add(i))
+  } else {
+    group.selected.clear()
+  }
+  rewriteGroups.value = [...rewriteGroups.value]
+}
+
+// 判断原始标题是否有仿写被选中（标记不可使用）
+const isOriginalTitleDisabled = (groupIndex) => {
+  const group = rewriteGroups.value[groupIndex]
+  if (!group) return false
+  return group.selected.size > 0
+}
+
+// 获取选中的仿写标题总数
+const getSelectedRewriteCount = () => {
+  return rewriteGroups.value.reduce((sum, g) => sum + g.selected.size, 0)
+}
+
+// 获取所有选中的仿写标题列表
+const getSelectedRewriteTitles = () => {
+  const titles = []
+  rewriteGroups.value.forEach(g => {
+    g.selected.forEach(idx => {
+      if (g.new_titles[idx]) {
+        titles.push(g.new_titles[idx])
+      }
+    })
+  })
+  return titles
+}
+
+// 将选中的仿写标题加入文章生成列表
+const addSelectedRewriteToQueue = async () => {
+  const selectedTitles = getSelectedRewriteTitles()
+  if (selectedTitles.length === 0) {
+    Message.warning('请先勾选要加入生成列表的标题')
+    return
+  }
+
+  addingRewriteToQueue.value = true
+  try {
+    const items = selectedTitles.map(title => ({
+      title: title,
+      article_type_id: rewriteArticleTypeId.value,  // 用户选择的文章类型
+      article_type: rewriteArticleType.value  // 付费类型
+    }))
+
+    const res = await aiGenerateApi.batchAddToQueue({ items })
+    const addedCount = res.data?.added_count || res.added_count || items.length
+
+    Message.success(`已成功将 ${addedCount} 个仿写标题加入文章生成列表`)
+    rewriteModalVisible.value = false
+  } catch (e) {
+    Message.error(`加入生成列表失败：${e.response?.data?.detail || e.message || '未知错误'}`)
+  } finally {
+    addingRewriteToQueue.value = false
+  }
+}
+
+// 复制仿写标题
+const copyRewriteTitle = (title) => {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(title).then(() => {
+      Message.success('已复制到剪贴板')
+    }).catch(() => {
+      fallbackCopy(title)
+    })
+  } else {
+    fallbackCopy(title)
+  }
+}
+
+const fallbackCopy = (text) => {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand('copy')
+    Message.success('已复制到剪贴板')
+  } catch {
+    Message.error('复制失败')
+  }
+  document.body.removeChild(textarea)
 }
 
 const addSelectedNewTitles = async () => {

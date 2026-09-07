@@ -216,6 +216,7 @@ class SettingsUpdate(BaseModel):
     default_image_count: Optional[int] = None
     default_ai_platform: Optional[str] = None
     default_article_type: Optional[str] = None
+    batch_generate: Optional[dict] = None
 
 
 @router.get("/settings")
@@ -235,6 +236,10 @@ async def update_settings(req: SettingsUpdate):
         config["settings"]["default_ai_platform"] = req.default_ai_platform
     if req.default_article_type is not None:
         config["settings"]["default_article_type"] = req.default_article_type
+    if req.batch_generate is not None:
+        if "batch_generate" not in config["settings"]:
+            config["settings"]["batch_generate"] = {}
+        config["settings"]["batch_generate"].update(req.batch_generate)
     save_config(config)
     return {"status": "ok"}
 

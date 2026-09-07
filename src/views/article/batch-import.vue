@@ -33,7 +33,7 @@
         </a-card>
 
         <a-card title="导入记录" style="margin-top:16px">
-          <a-table :data="importHistory" :pagination="false" bordered size="small">
+          <a-table :data="pagedImportHistory" :pagination="paginationConfig" bordered size="small" @page-change="handlePageChange" @page-size-change="handlePageSizeChange">
             <template #columns>
               <a-table-column title="文件名" data-index="filename" />
               <a-table-column title="导入数量" data-index="count" :width="100" />
@@ -94,7 +94,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { IconUpload, IconDownload } from '@arco-design/web-vue/es/icon'
 import { articleApi } from '@/api'
@@ -104,6 +104,25 @@ const importHistory = ref([
   { filename: '标题批量_20260901.xlsx', count: 50, time: '2026-09-01 14:30:00', status: '成功' },
   { filename: '家庭伦理标题.xlsx', count: 30, time: '2026-08-28 10:15:00', status: '成功' }
 ])
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(15)
+const pagedImportHistory = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return importHistory.value.slice(start, end)
+})
+const paginationConfig = computed(() => ({
+  current: currentPage.value,
+  pageSize: pageSize.value,
+  total: importHistory.value.length,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+const handlePageChange = (page) => { currentPage.value = page }
+const handlePageSizeChange = (size) => { pageSize.value = size; currentPage.value = 1 }
 
 const handleUpload = async (option) => {
   const file = option.fileItem.file

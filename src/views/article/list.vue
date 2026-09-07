@@ -60,16 +60,30 @@
 
       <!-- 表格 -->
       <a-table
-        :data="tableData"
+        :data="pagedTableData"
         :loading="loading"
-        :pagination="false"
+        :pagination="paginationConfig"
         :bordered="{ cell: true }"
         row-key="id"
-        @select-all="handleSelectAll"
-        @select="handleSelect"
+        @page-change="handlePageChange"
+        @page-size-change="handlePageSizeChange"
       >
         <template #columns>
-          <a-table-column type="selection" :width="50" />
+          <a-table-column :width="50" align="center">
+            <template #title>
+              <a-checkbox
+                :model-value="isAllSelected"
+                :indeterminate="isIndeterminate"
+                @change="handleSelectAll"
+              />
+            </template>
+            <template #cell="{ record }">
+              <a-checkbox
+                :model-value="selectedIds.includes(record.id)"
+                @change="(checked) => handleRowSelect(record, checked)"
+              />
+            </template>
+          </a-table-column>
           <a-table-column title="ID" data-index="id" :width="70" />
           <a-table-column title="标题" data-index="title" :width="280">
             <template #cell="{ record }">
@@ -93,10 +107,11 @@
             <template #cell="{ record }">{{ Object.keys(record.selected_images || {}).length }}</template>
           </a-table-column>
           <a-table-column title="创建时间" data-index="create_time" :width="170" />
-          <a-table-column title="操作" :width="200" fixed="right">
+          <a-table-column title="操作" :width="240" fixed="right">
             <template #cell="{ record }">
               <a-space>
                 <a-button type="text" size="small" @click="router.push(`/article/detail/${record.id}`)">详情</a-button>
+                <a-button type="text" size="small" status="primary" @click="openEditModal(record)">编辑</a-button>
                 <a-button type="text" size="small" status="warning" @click="exportArticle(record)">导出</a-button>
                 <a-button type="text" size="small" status="danger" @click="deleteArticle(record)">删除</a-button>
               </a-space>
@@ -104,17 +119,6 @@
           </a-table-column>
         </template>
       </a-table>
-
-      <!-- 分页 -->
-      <div class="pagination">
-        <a-pagination
-          :total="total"
-          :current="currentPage"
-          :page-size="pageSize"
-          @change="handlePageChange"
-          show-total
-        />
-      </div>
     </PageCard>
 
     <!-- 新建文章弹窗 -->
@@ -140,11 +144,34 @@
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- 编辑文章弹窗 -->
+    <a-modal v-model:visible="showEdit" title="编辑文章" @ok="saveEdit" confirm-loading="editing" :width="800">
+      <a-form :model="editForm" layout="vertical">
+        <a-form-item label="标题" required>
+          <a-input v-model="editForm.title" placeholder="请输入文章标题" />
+        </a-form-item>
+        <a-form-item label="文章内容">
+          <a-textarea v-model="editForm.content" placeholder="请输入文章内容" :rows="15" :auto-size="{ minRows: 10, maxRows: 25 }" />
+        </a-form-item>
+        <a-form-item label="话题">
+          <a-select v-model="editForm.topic_type" allow-clear style="width:100%">
+            <a-option v-for="t in topics" :key="t" :value="t">{{ t }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="付费类型">
+          <a-select v-model="editForm.article_type" style="width:100%">
+            <a-option value="free">免费</a-option>
+            <a-option value="paid">付费</a-option>
+          </a-select>
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import {
@@ -172,8 +199,24 @@ const selectedIds = ref([])
 const showCreate = ref(false)
 const creating = ref(false)
 
+// 分页相关计算属性和方法
+const paginationConfig = computed(() => ({
+  current: currentPage.value,
+  pageSize: pageSize.value,
+  total: total.value,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+
 const filter = reactive({ status: undefined, topic: undefined, keyword: '' })
 const createForm = reactive({ title: '', topic_type: '', ai_type: 'yangdu_new', limit_prompt: '' })
+
+// 编辑文章相关
+const showEdit = ref(false)
+const editing = ref(false)
+const editingId = ref(null)
+const editForm = reactive({ title: '', content: '', topic_type: '', article_type: 'free' })
 
 const statusOptions = [
   { value: 11, label: '待生成文章' }, { value: 12, label: '待生成图片' },
@@ -211,13 +254,40 @@ const loadData = async () => {
 const handleSearch = () => { currentPage.value = 1; loadData() }
 const handleReset = () => { filter.status = undefined; filter.topic = undefined; filter.keyword = ''; currentPage.value = 1; loadData() }
 const handlePageChange = (page) => { currentPage.value = page; loadData() }
+const handlePageSizeChange = (size) => { pageSize.value = size; currentPage.value = 1; loadData() }
 
+// 手动多选框相关计算属性（只针对当前页）
+const pagedTableData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return tableData.value.slice(start, end)
+})
+const isAllSelected = computed(() => {
+  if (pagedTableData.value.length === 0) return false
+  return pagedTableData.value.every(t => selectedIds.value.includes(t.id))
+})
+const isIndeterminate = computed(() => {
+  if (pagedTableData.value.length === 0) return false
+  const selectedCount = pagedTableData.value.filter(t => selectedIds.value.includes(t.id)).length
+  return selectedCount > 0 && selectedCount < pagedTableData.value.length
+})
 const handleSelectAll = (checked) => {
-  selectedIds.value = checked ? tableData.value.map(a => a.id) : []
+  if (checked) {
+    const currentIds = pagedTableData.value.map(t => t.id)
+    selectedIds.value = [...new Set([...selectedIds.value, ...currentIds])]
+  } else {
+    const currentIds = new Set(pagedTableData.value.map(t => t.id))
+    selectedIds.value = selectedIds.value.filter(id => !currentIds.has(id))
+  }
 }
-const handleSelect = (record, checked) => {
-  if (checked) selectedIds.value.push(record.id)
-  else selectedIds.value = selectedIds.value.filter(id => id !== record.id)
+const handleRowSelect = (record, checked) => {
+  if (checked) {
+    if (!selectedIds.value.includes(record.id)) {
+      selectedIds.value.push(record.id)
+    }
+  } else {
+    selectedIds.value = selectedIds.value.filter(id => id !== record.id)
+  }
 }
 const clearSelection = () => { selectedIds.value = [] }
 
@@ -336,6 +406,38 @@ const createArticle = async () => {
     createForm.limit_prompt = ''
     loadData()
   }, 800)
+}
+
+// 打开编辑弹窗
+const openEditModal = async (record) => {
+  editingId.value = record.id
+  editForm.title = record.title || ''
+  editForm.content = record.content || ''
+  editForm.topic_type = record.topic_type || ''
+  editForm.article_type = record.article_type || 'free'
+  showEdit.value = true
+}
+
+// 保存编辑
+const saveEdit = async () => {
+  if (!editForm.title) { Message.warning('请输入标题'); return }
+  editing.value = true
+  try {
+    // 调用API更新文章
+    await aiGenerateApi.updateArticle(editingId.value, {
+      title: editForm.title,
+      content: editForm.content,
+      topic_type: editForm.topic_type,
+      article_type: editForm.article_type
+    })
+    Message.success('文章更新成功')
+    showEdit.value = false
+    loadData()
+  } catch (e) {
+    Message.error(`更新失败：${e.response?.data?.detail || e.message}`)
+  } finally {
+    editing.value = false
+  }
 }
 
 const downloadTemplate = () => {

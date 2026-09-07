@@ -25,16 +25,22 @@ const routes = [
         meta: { title: '标题采集', icon: 'icon-search' }
       },
       {
+        path: 'article-center',
+        name: 'ArticleCenter',
+        component: () => import('@/views/article/center.vue'),
+        meta: { title: '文章中心', icon: 'icon-edit' }
+      },
+      {
         path: 'article-generate',
         name: 'ArticleGenerate',
-        component: () => import('@/views/article-generate/index.vue'),
-        meta: { title: '文章生成', icon: 'icon-edit' }
+        redirect: '/article-center?tab=generate',
+        meta: { title: '文章生成', hidden: true }
       },
       {
         path: 'article',
         name: 'Article',
-        component: () => import('@/views/article/list.vue'),
-        meta: { title: '文章管理', icon: 'icon-file' }
+        redirect: '/article-center?tab=manage',
+        meta: { title: '文章管理', hidden: true }
       },
       {
         path: 'article/detail/:id',

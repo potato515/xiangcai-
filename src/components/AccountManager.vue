@@ -19,16 +19,30 @@
     </div>
 
     <a-table
-      :data="tableData"
+      :data="pagedTableData"
       :loading="loading"
-      :pagination="false"
+      :pagination="paginationConfig"
       :bordered="{ cell: true }"
       row-key="id"
-      @select-all="handleSelectAll"
-      @select="handleSelect"
+      @page-change="handlePageChange"
+      @page-size-change="handlePageSizeChange"
     >
       <template #columns>
-        <a-table-column type="selection" :width="50" />
+        <a-table-column :width="50" align="center">
+          <template #title>
+            <a-checkbox
+              :model-value="isAllSelected"
+              :indeterminate="isIndeterminate"
+              @change="handleSelectAll"
+            />
+          </template>
+          <template #cell="{ record }">
+            <a-checkbox
+              :model-value="selectedIds.includes(record.id)"
+              @change="(checked) => handleRowSelect(record, checked)"
+            />
+          </template>
+        </a-table-column>
         <a-table-column title="ID" data-index="id" :width="70" />
         <a-table-column title="用户名" data-index="username" :width="160" />
         <a-table-column v-if="platform === 'yangdu'" title="账号类型" data-index="account_type" :width="120">
@@ -99,7 +113,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { IconPlus, IconDelete } from '@arco-design/web-vue/es/icon'
 import PageCard from '@/components/common/PageCard.vue'
@@ -117,6 +131,25 @@ const showModal = ref(false)
 const saving = ref(false)
 const editingId = ref(null)
 const selectedIds = ref([])
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(15)
+const pagedTableData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return tableData.value.slice(start, end)
+})
+const paginationConfig = computed(() => ({
+  current: currentPage.value,
+  pageSize: pageSize.value,
+  total: tableData.value.length,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+const handlePageChange = (page) => { currentPage.value = page }
+const handlePageSizeChange = (size) => { pageSize.value = size; currentPage.value = 1 }
 
 const form = reactive({
   username: '',
@@ -141,13 +174,33 @@ const loadData = async () => {
   }
 }
 
+// 手动多选框相关计算属性（只针对当前页）
+const isAllSelected = computed(() => {
+  if (pagedTableData.value.length === 0) return false
+  return pagedTableData.value.every(t => selectedIds.value.includes(t.id))
+})
+const isIndeterminate = computed(() => {
+  if (pagedTableData.value.length === 0) return false
+  const selectedCount = pagedTableData.value.filter(t => selectedIds.value.includes(t.id)).length
+  return selectedCount > 0 && selectedCount < pagedTableData.value.length
+})
 const handleSelectAll = (checked) => {
-  selectedIds.value = checked ? tableData.value.map(a => a.id) : []
+  if (checked) {
+    const currentIds = pagedTableData.value.map(t => t.id)
+    selectedIds.value = [...new Set([...selectedIds.value, ...currentIds])]
+  } else {
+    const currentIds = new Set(pagedTableData.value.map(t => t.id))
+    selectedIds.value = selectedIds.value.filter(id => !currentIds.has(id))
+  }
 }
-
-const handleSelect = (record, checked) => {
-  if (checked) selectedIds.value.push(record.id)
-  else selectedIds.value = selectedIds.value.filter(id => id !== record.id)
+const handleRowSelect = (record, checked) => {
+  if (checked) {
+    if (!selectedIds.value.includes(record.id)) {
+      selectedIds.value.push(record.id)
+    }
+  } else {
+    selectedIds.value = selectedIds.value.filter(id => id !== record.id)
+  }
 }
 
 const triggerLogin = async (record) => {

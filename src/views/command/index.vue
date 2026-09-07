@@ -28,11 +28,13 @@
       </template>
 
       <a-table
-        :data="commandList"
+        :data="pagedCommandList"
         :loading="loading"
-        :pagination="false"
+        :pagination="paginationConfig"
         :bordered="{ cell: true }"
         row-key="id"
+        @page-change="handlePageChange"
+        @page-size-change="handlePageSizeChange"
       >
         <template #columns>
           <a-table-column title="ID" data-index="id" :width="70" />
@@ -75,7 +77,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { IconRefresh, IconDelete, IconClockCircle, IconPlayCircle, IconCheckCircle, IconCloseCircle } from '@arco-design/web-vue/es/icon'
 import StatCard from '@/components/common/StatCard.vue'
@@ -87,6 +89,25 @@ import { useWebSocket } from '@/composables/useWebSocket'
 const loading = ref(false)
 const commandList = ref([])
 const logs = ref([])
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(15)
+const pagedCommandList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return commandList.value.slice(start, end)
+})
+const paginationConfig = computed(() => ({
+  current: currentPage.value,
+  pageSize: pageSize.value,
+  total: commandList.value.length,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+const handlePageChange = (page) => { currentPage.value = page }
+const handlePageSizeChange = (size) => { pageSize.value = size; currentPage.value = 1 }
 
 const statCards = ref([
   { title: '待执行', value: '3', icon: IconClockCircle, color: '#ff7d00' },

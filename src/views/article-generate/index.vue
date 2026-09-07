@@ -37,6 +37,9 @@
               <a-button size="small" @click="showAddModal = true">
                 <template #icon><icon-plus /></template>手动添加
               </a-button>
+              <a-button size="small" status="warning" @click="resetAllStuckItems">
+                <template #icon><icon-reload /></template>重置卡住任务
+              </a-button>
               <a-button size="small" status="danger" @click="clearQueue" :disabled="queue.length === 0">
                 <template #icon><icon-delete /></template>清空队列
               </a-button>
@@ -63,16 +66,18 @@
           </div>
 
           <a-table
-            :data="queue"
+            :data="pagedQueue"
             :loading="queueLoading"
-            :pagination="false"
+            :pagination="paginationConfig"
             :bordered="{ cell: true }"
             row-key="id"
             size="small"
+            @page-change="handlePageChange"
+            @page-size-change="handlePageSizeChange"
           >
             <template #columns>
-              <a-table-column title="" :width="50" align="center">
-                <template #header>
+              <a-table-column :width="50" align="center">
+                <template #title>
                   <a-checkbox
                     :model-value="isAllQueueSelected"
                     :indeterminate="isQueueIndeterminate"
@@ -126,9 +131,20 @@
                   <a-tag :color="queueStatusColor(record.status)" size="small">{{ queueStatusText(record.status) }}</a-tag>
                 </template>
               </a-table-column>
-              <a-table-column title="操作" :width="100" fixed="right">
+              <a-table-column title="操作" :width="180" fixed="right">
                 <template #cell="{ record }">
-                  <a-button type="text" size="small" status="danger" @click="removeQueueItem(record)">删除</a-button>
+                  <a-space>
+                    <a-button
+                      v-if="record.status !== 'pending'"
+                      type="text"
+                      size="small"
+                      status="warning"
+                      @click="resetQueueItem(record)"
+                    >
+                      重新生成
+                    </a-button>
+                    <a-button type="text" size="small" status="danger" @click="removeQueueItem(record)">删除</a-button>
+                  </a-space>
                 </template>
               </a-table-column>
             </template>
@@ -174,12 +190,15 @@
                 type="primary"
                 long
                 :loading="batchStarting"
-                :disabled="queue.length === 0 || !batchForm.platform || !batchForm.account_id || batchRunning"
+                :disabled="getGenerateItems().length === 0 || !batchForm.platform || !batchForm.account_id || batchRunning"
                 @click="startBatchTask"
               >
                 <template #icon><icon-play-circle /></template>
-                启动批量生成（{{ queue.length }}篇）
+                {{ selectedQueueIds.length > 0 ? `启动批量生成（选中${selectedQueueIds.length}篇）` : `启动批量生成（全部${getGenerateItems().length}篇）` }}
               </a-button>
+              <div v-if="selectedQueueIds.length > 0" style="text-align:center;font-size:12px;color:#165dff;margin-top:4px;">
+                已选择 {{ selectedQueueIds.length }} 篇，将只生成选中的文章（取消选择则生成全部）
+              </div>
             </a-form-item>
 
             <a-alert type="info" style="margin-top: 12px;">
@@ -236,6 +255,30 @@ const editingId = ref(null)
 const editingTitle = ref('')
 const editInputRef = ref(null)
 
+// 分页相关变量
+const currentPage = ref(1)
+const pageSize = ref(10)
+const pagedQueue = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return queue.value.slice(start, end)
+})
+const paginationConfig = computed(() => ({
+  current: currentPage.value,
+  pageSize: pageSize.value,
+  total: queue.value.length,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+const handlePageChange = (page) => {
+  currentPage.value = page
+}
+const handlePageSizeChange = (size) => {
+  pageSize.value = size
+  currentPage.value = 1
+}
+
 const showAddModal = ref(false)
 const manualTitle = ref('')
 const manualArticleTypeId = ref(null)
@@ -246,7 +289,7 @@ const accounts = ref([])
 const platformNames = { zhipu: '智谱AI', yuanbao: '腾讯元宝', doubao: '豆包' }
 
 const batchForm = ref({
-  platform: 'doubao',
+  platform: 'zhipu',
   account_id: '',
   generate_images: true
 })
@@ -257,14 +300,14 @@ const batchTask = ref(null)
 let batchPollingTimer = null
 
 const isAllQueueSelected = computed(() => {
-  if (queue.value.length === 0) return false
-  return queue.value.every(item => selectedQueueIds.value.includes(item.id))
+  if (pagedQueue.value.length === 0) return false
+  return pagedQueue.value.every(item => selectedQueueIds.value.includes(item.id))
 })
 
 const isQueueIndeterminate = computed(() => {
-  if (queue.value.length === 0) return false
-  const selectedCount = queue.value.filter(item => selectedQueueIds.value.includes(item.id)).length
-  return selectedCount > 0 && selectedCount < queue.value.length
+  if (pagedQueue.value.length === 0) return false
+  const selectedCount = pagedQueue.value.filter(item => selectedQueueIds.value.includes(item.id)).length
+  return selectedCount > 0 && selectedCount < pagedQueue.value.length
 })
 
 const batchStatusColor = computed(() => {
@@ -319,9 +362,12 @@ const onPlatformChange = () => {
 
 const handleQueueSelectAll = (checked) => {
   if (checked) {
-    selectedQueueIds.value = [...new Set([...selectedQueueIds.value, ...queue.value.map(i => i.id)])]
+    // 全选当前页
+    const currentIds = pagedQueue.value.map(i => i.id)
+    selectedQueueIds.value = [...new Set([...selectedQueueIds.value, ...currentIds])]
   } else {
-    const currentIds = new Set(queue.value.map(i => i.id))
+    // 取消全选当前页
+    const currentIds = new Set(pagedQueue.value.map(i => i.id))
     selectedQueueIds.value = selectedQueueIds.value.filter(id => !currentIds.has(id))
   }
 }
@@ -356,10 +402,12 @@ const saveEdit = async (record) => {
 
 const updateQueueItem = async (record) => {
   try {
-    await aiGenerateApi.updateQueueItem(record.id, { article_type_id: record.article_type_id })
+    // 确保类型转换为整数
+    const typeId = record.article_type_id ? parseInt(record.article_type_id) : null
+    await aiGenerateApi.updateQueueItem(parseInt(record.id), { article_type_id: typeId })
     Message.success('文章类型已更新')
   } catch (e) {
-    Message.error('更新文章类型失败')
+    Message.error(`更新文章类型失败：${e.response?.data?.detail || e.message}`)
   }
 }
 
@@ -381,23 +429,27 @@ const removeQueueItem = (record) => {
 }
 
 const batchUpdateType = async () => {
+  if (selectedQueueIds.value.length === 0) {
+    Message.warning('请先选择要修改的文章')
+    return
+  }
   if (!batchArticleTypeId.value) {
     Message.warning('请先选择文章类型')
     return
   }
   try {
+    // 确保ID和类型ID都转换为整数
+    const intIds = selectedQueueIds.value.map(id => parseInt(id))
+    const intTypeId = parseInt(batchArticleTypeId.value)
     await aiGenerateApi.batchUpdateQueue({
-      ids: selectedQueueIds.value,
-      article_type_id: batchArticleTypeId.value
+      ids: intIds,
+      article_type_id: intTypeId
     })
-    queue.value.forEach(item => {
-      if (selectedQueueIds.value.includes(item.id)) {
-        item.article_type_id = batchArticleTypeId.value
-      }
-    })
+    // 重新加载队列数据，确保表格显示最新数据
+    await loadQueue()
     Message.success(`已更新 ${selectedQueueIds.value.length} 项的文章类型`)
   } catch (e) {
-    Message.error('批量更新失败')
+    Message.error(`批量更新失败：${e.response?.data?.detail || e.message}`)
   }
 }
 
@@ -437,6 +489,64 @@ const clearQueue = () => {
   })
 }
 
+const resetQueueItem = (record) => {
+  const statusText = {
+    success: '已完成',
+    running: '生成中',
+    failed: '失败'
+  }[record.status] || record.status
+
+  Modal.confirm({
+    title: '重新生成确认',
+    content: `任务"${record.title.slice(0, 30)}..."当前状态为"${statusText}"，确定要重新生成吗？之前生成的内容会被清空。`,
+    okButtonProps: { status: 'warning' },
+    okText: '重新生成',
+    onOk: async () => {
+      try {
+        await aiGenerateApi.resetQueueItem(record.id)
+        // 更新本地状态
+        const item = queue.value.find(i => i.id === record.id)
+        if (item) {
+          item.status = 'pending'
+          item.error = ''
+          item.article_content = ''
+        }
+        Message.success('已重置为待生成状态，请选择后重新开始生成')
+      } catch (e) {
+        Message.error('重置失败')
+      }
+    }
+  })
+}
+
+const resetAllStuckItems = () => {
+  const stuckCount = queue.value.filter(i => i.status === 'running').length
+  if (stuckCount === 0) {
+    Message.info('当前没有卡住的任务')
+    return
+  }
+  Modal.confirm({
+    title: '重置所有卡住任务',
+    content: `检测到 ${stuckCount} 个状态为"生成中"的任务，确定要全部重置为"待生成"吗？`,
+    okButtonProps: { status: 'warning' },
+    onOk: async () => {
+      try {
+        const res = await aiGenerateApi.resetAllStuckItems()
+        // 更新本地状态
+        queue.value.forEach(item => {
+          if (item.status === 'running') {
+            item.status = 'pending'
+            item.error = ''
+          }
+        })
+        Message.success(`已重置 ${res.reset_count || stuckCount} 个卡住的任务`)
+      } catch (e) {
+        Message.error('重置失败')
+      }
+    }
+  })
+}
+
 const addManualItem = async () => {
   if (!manualTitle.value.trim()) {
     Message.warning('请输入文章标题')
@@ -461,9 +571,22 @@ const addManualItem = async () => {
   }
 }
 
+// 获取需要生成的文章列表
+// 如果有选中的文章，只返回选中的待生成文章；如果没有选中的文章，返回所有待生成文章
+const getGenerateItems = () => {
+  const pendingItems = queue.value.filter(i => i.status === 'pending' || i.status === 'failed')
+  if (selectedQueueIds.value.length > 0) {
+    // 只返回选中的待生成文章
+    return pendingItems.filter(i => selectedQueueIds.value.includes(i.id))
+  }
+  // 返回所有待生成文章
+  return pendingItems
+}
+
 const startBatchTask = async () => {
-  if (queue.value.length === 0) {
-    Message.warning('队列为空')
+  const generateItems = getGenerateItems()
+  if (generateItems.length === 0) {
+    Message.warning(selectedQueueIds.value.length > 0 ? '选中的文章中没有待生成的（全部已成功）' : '没有待生成的文章（全部已成功）')
     return
   }
   if (!batchForm.value.platform || !batchForm.value.account_id) {
@@ -473,13 +596,7 @@ const startBatchTask = async () => {
 
   batchStarting.value = true
   try {
-    const pendingItems = queue.value.filter(i => i.status === 'pending' || i.status === 'failed')
-    const itemIds = pendingItems.map(i => i.id)
-
-    if (itemIds.length === 0) {
-      Message.warning('没有待生成的文章（全部已成功）')
-      return
-    }
+    const itemIds = generateItems.map(i => i.id)
 
     const res = await aiGenerateApi.createBatchTask({
       item_ids: itemIds,
@@ -492,7 +609,7 @@ const startBatchTask = async () => {
     await aiGenerateApi.startBatchTask(batchId)
 
     batchRunning.value = true
-    Message.success('批量任务已启动')
+    Message.success(`批量任务已启动（${generateItems.length}篇）`)
     startBatchPolling(batchId)
   } catch (e) {
     Message.error(`启动失败：${e.response?.data?.detail || e.message}`)

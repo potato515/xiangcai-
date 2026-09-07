@@ -143,7 +143,7 @@ class RewriteTitlesReq(BaseModel):
 
 
 @router.post("/rewrite")
-async def rewrite_titles(req: RewriteTitlesReq):
+def rewrite_titles(req: RewriteTitlesReq):
     """
     调用豆包AI批量重写标题
     使用浏览器自动化控制豆包网页版，根据指令生成新标题
@@ -188,7 +188,7 @@ async def rewrite_titles(req: RewriteTitlesReq):
                 raise HTTPException(status_code=401, detail="豆包登录失败，请在浏览器中手动登录后重试")
 
             # 重写标题
-            success, new_titles, msg = doubao.rewrite_titles(
+            success, result_data, msg = doubao.rewrite_titles(
                 original_titles=original_titles,
                 rewrite_instruction=req.rewrite_instruction,
                 timeout=300
@@ -200,8 +200,10 @@ async def rewrite_titles(req: RewriteTitlesReq):
             return {
                 "status": "ok",
                 "original_count": len(original_titles),
-                "new_count": len(new_titles),
-                "new_titles": new_titles
+                "group_count": len(result_data.get("groups", [])),
+                "new_count": len(result_data.get("all_new_titles", [])),
+                "groups": result_data.get("groups", []),
+                "all_new_titles": result_data.get("all_new_titles", [])
             }
 
         finally:

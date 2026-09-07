@@ -125,9 +125,11 @@ export const aiGenerateApi = {
   // 文章列表
   getArticles: (params) => request.get('/ai-generate/articles', { params }),
   getArticle: (id) => request.get(`/ai-generate/articles/${id}`),
+  updateArticle: (id, data) => request.put(`/ai-generate/articles/${id}`, data),
   deleteArticle: (id) => request.delete(`/ai-generate/articles/${id}`),
   // 生成图片
   generateImages: (data) => request.post('/ai-generate/generate/images', data),
+  regenerateAllImages: (data) => request.post('/ai-generate/generate/images/regenerate-all', data),
   selectImage: (data) => request.post('/ai-generate/images/select', data),
   getArticleImages: (articleId) => request.get(`/ai-generate/images/${articleId}`),
   // 排版与导出
@@ -144,6 +146,8 @@ export const aiGenerateApi = {
   removeFromQueue: (id) => request.delete(`/ai-generate/queue/${id}`),
   batchDeleteQueue: (data) => request.post('/ai-generate/queue/batch-delete', data),
   clearQueue: () => request.post('/ai-generate/queue/clear'),
+  resetQueueItem: (itemId) => request.post(`/ai-generate/queue/reset/${itemId}`),
+  resetAllStuckItems: () => request.post('/ai-generate/queue/reset-all-stuck'),
   // 批量生成任务
   createBatchTask: (data) => request.post('/ai-generate/batch/create', data),
   startBatchTask: (batchId) => request.post(`/ai-generate/batch/start/${batchId}`),

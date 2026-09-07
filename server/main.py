@@ -4,6 +4,16 @@
 """
 import os
 import sys
+import asyncio
+
+# ============================================================
+# 【关键】Windows上必须在导入任何模块前设置ProactorEventLoop
+# Playwright需要创建子进程启动浏览器，SelectorEventLoop不支持子进程
+# 必须在fastapi/uvicorn创建事件循环之前设置，否则设置无效
+# ============================================================
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -86,7 +96,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8090,
-        reload=True,
+        port=9527,  # 临时测试端口
+        reload=False,  # 关闭reload模式，避免子进程导致事件循环策略失效
         log_level="info"
     )

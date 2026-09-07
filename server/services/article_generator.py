@@ -44,61 +44,179 @@ def save_articles(articles):
         json.dump(articles, f, ensure_ascii=False, indent=2)
 
 
-def split_chapters(content):
+def split_chapters(content, article_type="free"):
     """
     将文章内容拆分为章节段落
     完全基于AI返回的内容，不强制固定章节数量
     优先识别 01、02... 或 一、二、三... 等格式的章节序号
     如果没有序号，则按自然段落拆分
+
+    Args:
+        content: 文章内容
+        article_type: 文章类型（free/paid），付费文章只在05、06章节添加（付费内容）提示
     """
     if not content:
         return []
 
     lines = [line.strip() for line in content.split('\n') if line.strip()]
+    if not lines:
+        return []
 
-    # 尝试识别章节序号（支持多种格式：01、一、第1章、第一节等）
+    # 跳过文章标题行（第一行如果包含书名号或长度>50，认为是文章标题）
+    start_idx = 0
+    if lines and (('《' in lines[0] and '》' in lines[0]) or len(lines[0]) > 50):
+        start_idx = 1
+
+    # 严格的章节识别模式：只匹配明确的章节序号
+    # 模式1：01、02、1、2 等数字开头，后跟分隔符（空格、点、顿号、冒号等）
+    chapter_pattern_num = re.compile(
+        r'^(\d{1,2})'  # 1-2位数字
+        r'[\s\.\、\:\：\)\）]'  # 必须有分隔符
+        r'\s*(.*)'  # 章节标题（可能为空）
+    )
+    # 模式2：一、二、三... 中文数字开头，后跟分隔符
+    chapter_pattern_cn = re.compile(
+        r'^([一二三四五六七八九十百]+)'  # 中文数字
+        r'[\s\.\、\:\：\)\）]'  # 必须有分隔符
+        r'\s*(.*)'  # 章节标题
+    )
+    # 模式3：第X章/节/部分/篇
+    chapter_pattern_di = re.compile(
+        r'^第[一二三四五六七八九十百\d]+[章节部分篇]'
+        r'[\s\:\：]?\s*(.*)'
+    )
+    # 模式4：**01** 或 **引言** 等Markdown加粗格式的章节标题
+    chapter_pattern_md = re.compile(
+        r'^\*+\s*(\d{1,2}|引言|引子|楔子|尾声|后记)\s*\*+\s*(.*)'
+    )
+
+    def is_chapter_title(line):
+        """判断是否是章节标题行"""
+        if len(line) > 80:
+            return None
+
+        # 模式0：单独的数字行（如"01"、"02"、"1"、"2"等）
+        if re.match(r'^\d{1,2}$', line):
+            num = int(line)
+            if 1 <= num <= 99:
+                return (f'{num:02d}', '')
+
+        # 模式0.5：单独的引言/引子/楔子/尾声/后记行
+        if line in ['引言', '引子', '楔子', '尾声', '后记', '前言', '序']:
+            if line in ['引言', '引子', '楔子', '前言', '序']:
+                return ('00', line)
+            else:
+                return ('99', line)
+
+        # 检查Markdown加粗格式
+        match = chapter_pattern_md.match(line)
+        if match:
+            num_str = match.group(1)
+            title = match.group(2).strip()
+            if num_str in ['引言', '引子', '楔子', '前言', '序']:
+                return ('00', title if title else num_str)
+            elif num_str in ['尾声', '后记']:
+                return ('99', title if title else num_str)
+            else:
+                try:
+                    num = int(num_str)
+                    return (f'{num:02d}', title)
+                except:
+                    return None
+        # 检查数字序号
+        match = chapter_pattern_num.match(line)
+        if match:
+            num = int(match.group(1))
+            if 1 <= num <= 99:
+                title = match.group(2).strip()
+                return (f'{num:02d}', title)
+        # 检查中文数字序号
+        match = chapter_pattern_cn.match(line)
+        if match:
+            cn_num = match.group(1)
+            cn_map = {'一':1, '二':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9, '十':10}
+            if cn_num in cn_map:
+                num = cn_map[cn_num]
+                title = match.group(2).strip()
+                return (f'{num:02d}', title)
+        # 检查第X章/节格式
+        match = chapter_pattern_di.match(line)
+        if match:
+            title = match.group(1).strip()
+            return (None, title)  # 序号无法确定，用自动编号
+        return None
+
     chapters = []
     current_chapter = None
-    chapter_pattern = re.compile(
-        r'^(?:(?:0?[1-9]\d?)|(?:[一二三四五六七八九十百]+))'  # 数字或中文数字
-        r'[\s\.\、\:\：\)\）]?\s*'  # 分隔符
-        r'(.*)'  # 章节标题
-    )
-    # 更宽松的章节识别：以"第X章/节/部分"开头
-    chapter_pattern2 = re.compile(r'^第[一二三四五六七八九十百\d]+[章节部分篇][\s\:\：]?\s*(.*)')
+    intro_collected = False
 
-    for line in lines:
-        match = chapter_pattern.match(line) or chapter_pattern2.match(line)
-        if match and len(line) < 80:  # 章节标题通常较短
+    for i in range(start_idx, len(lines)):
+        line = lines[i]
+        chapter_info = is_chapter_title(line)
+
+        if chapter_info:
+            # 保存当前章节
             if current_chapter is not None:
                 chapters.append(current_chapter)
-            title = match.group(1).strip()
+
+            num, title = chapter_info
+            if num is None:
+                num = f'{len(chapters)+1:02d}'
+
+            # 小标题判断：只有简短的标题（<15字）才认为是真正的小标题
+            # 长标题（如"01 沈玉芬，我媳妇穿那件..."）实际上是章节序号+正文第一行
+            # 这种情况标题留空，把长内容当作正文内容的第一行
+            display_title = ''
+            first_content_line = ''
+            if title:
+                title = title.strip()
+                if len(title) < 15:
+                    # 短标题，认为是真正的小标题
+                    display_title = title
+                else:
+                    # 长标题，认为是正文内容的第一行，不是小标题
+                    first_content_line = title
+
+            # 处理付费内容提示：付费文章只在05、06章节添加（付费内容）提示
+            if article_type == 'paid' and num in ['05', '06']:
+                if '付费内容' not in display_title:
+                    if display_title:
+                        display_title = f'{display_title}（付费内容）'
+                    else:
+                        display_title = '（付费内容）'
+
             current_chapter = {
-                'num': f'{len(chapters)+1:02d}',
-                'title': title if title else f'第{len(chapters)+1}节',
+                'num': num,
+                'title': display_title,
+                'content': first_content_line  # 如果有长标题，作为正文第一行
+            }
+            intro_collected = True
+        elif current_chapter is not None:
+            # 添加到当前章节内容
+            if current_chapter['content']:
+                current_chapter['content'] += '\n' + line
+            else:
+                current_chapter['content'] = line
+        elif not intro_collected:
+            # 还没有识别到任何章节，把内容作为引言
+            current_chapter = {
+                'num': '00',
+                'title': '引言',
                 'content': line
             }
-        elif current_chapter is not None:
-            current_chapter['content'] += '\n' + line
-        else:
-            # 还没有识别到章节，把内容作为引言
-            if chapters or current_chapter is None:
-                current_chapter = {
-                    'num': '00',
-                    'title': '引言',
-                    'content': line
-                }
+            intro_collected = True
 
+    # 保存最后一个章节
     if current_chapter is not None:
         chapters.append(current_chapter)
 
-    # 如果识别到章节，直接返回（不限制数量）
+    # 如果识别到章节，直接返回
     if len(chapters) > 1:
         return chapters
 
     # 没有识别到章节序号，按自然段落拆分（每个非空行作为一个段落）
     chapters = []
-    for i, line in enumerate(lines):
+    for i, line in enumerate(lines[start_idx:]):
         chapters.append({
             'num': f'{i+1:02d}',
             'title': line[:30] if len(line) > 30 else line,
@@ -198,7 +316,7 @@ class ArticleGenerator:
 
             # 渲染提示词模板，替换 {{title}} 等变量
             prompt = self.render_prompt_template(prompt, title, article_type)
-            self.print_info(f"提示词模板已渲染，标题: {title[:30]}...")
+            print(f"[ArticleGenerator] 提示词模板已渲染，标题: {title[:30]}...")
 
             # 获取AI服务
             ai_service = self.get_ai_service(platform, account_id)
@@ -223,8 +341,8 @@ class ArticleGenerator:
                 if not success:
                     return False, None, f"文章生成失败: {msg}"
 
-                # 拆分章节（完全基于AI返回内容，不强制固定数量）
-                chapters = split_chapters(content)
+                # 拆分章节（完全基于AI返回内容，不强制固定数量，传入文章类型处理付费提示）
+                chapters = split_chapters(content, article_type)
 
                 # 保存文章
                 articles = load_articles()

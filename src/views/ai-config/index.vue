@@ -9,7 +9,7 @@
               <span>文章类型管理（选择类型后使用对应提示词生成文章）</span>
               <a-button type="primary" size="small" @click="showTypeModal()">新增类型</a-button>
             </div>
-            <a-table :data="articleTypes" :pagination="false" size="small" row-key="id">
+            <a-table :data="pagedArticleTypes" :pagination="articleTypePagination" size="small" row-key="id" @page-change="handleArticleTypePageChange" @page-size-change="handleArticleTypePageSizeChange">
               <template #columns>
                 <a-table-column title="ID" data-index="id" :width="60" />
                 <a-table-column title="类型名称" data-index="name" :width="150" />
@@ -69,7 +69,7 @@
               <a-button type="primary" size="small" @click="showAccountModal()">新增账号</a-button>
             </div>
 
-            <a-table :data="accounts" :pagination="false" size="small" row-key="id">
+            <a-table :data="pagedAccounts" :pagination="accountPagination" size="small" row-key="id" @page-change="handleAccountPageChange" @page-size-change="handleAccountPageSizeChange">
               <template #columns>
                 <a-table-column title="ID" data-index="id" :width="60" />
                 <a-table-column title="账号名称" data-index="name" :width="120" />
@@ -92,6 +92,7 @@
         <a-tab-pane key="settings" title="生成设置">
           <div class="config-section">
             <a-form layout="vertical">
+              <a-divider orientation="left">基础设置</a-divider>
               <a-form-item label="每个段落默认备选图片数量">
                 <a-input-number v-model="settings.default_image_count" :min="1" :max="10" />
               </a-form-item>
@@ -108,8 +109,52 @@
                   <a-option value="paid">付费类型</a-option>
                 </a-select>
               </a-form-item>
+
+              <a-divider orientation="left">批量生成默认配置（文章中心页面启动批量生成时使用）</a-divider>
+              <a-row :gutter="24">
+                <a-col :span="12">
+                  <a-form-item label="文章生成AI平台" required>
+                    <a-select v-model="batchConfig.article_platform" style="width: 100%;">
+                      <a-option value="zhipu">智谱AI</a-option>
+                      <a-option value="doubao">豆包</a-option>
+                      <a-option value="yuanbao">腾讯元宝</a-option>
+                    </a-select>
+                  </a-form-item>
+                </a-col>
+                <a-col :span="12">
+                  <a-form-item label="文章生成默认账号" required>
+                    <a-select v-model="batchConfig.article_account_id" style="width: 100%;" placeholder="请选择账号">
+                      <a-option v-for="acc in articlePlatformAccounts" :key="acc.id" :value="acc.account_id">
+                        {{ acc.name }}（{{ acc.account_id }}）
+                      </a-option>
+                    </a-select>
+                  </a-form-item>
+                </a-col>
+              </a-row>
+              <a-row :gutter="24">
+                <a-col :span="12">
+                  <a-form-item label="图片生成AI平台">
+                    <a-select v-model="batchConfig.image_platform" style="width: 100%;">
+                      <a-option value="doubao">豆包</a-option>
+                      <a-option value="zhipu">智谱AI</a-option>
+                    </a-select>
+                  </a-form-item>
+                </a-col>
+                <a-col :span="12">
+                  <a-form-item label="每章节备选图片数量">
+                    <a-input-number v-model="batchConfig.image_count_per_chapter" :min="1" :max="10" style="width: 100%;" />
+                  </a-form-item>
+                </a-col>
+              </a-row>
+              <a-form-item label="是否自动生成配套图片">
+                <a-switch v-model="batchConfig.generate_images" />
+                <span style="margin-left: 8px; font-size: 12px; color: #86909c;">
+                  开启后，文章生成成功后会自动调用豆包AI为每个章节生成备选图片
+                </span>
+              </a-form-item>
+
               <a-form-item>
-                <a-button type="primary" :loading="savingSettings" @click="saveSettings">保存设置</a-button>
+                <a-button type="primary" :loading="savingSettings" @click="saveSettings">保存全部设置</a-button>
               </a-form-item>
             </a-form>
           </div>
@@ -177,7 +222,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { aiConfigApi } from '@/api'
 
@@ -200,6 +245,44 @@ const accountModalVisible = ref(false)
 const editingAccount = ref(null)
 const accountForm = ref({ name: '', account_id: '', model: 'DeepSeek', remark: '', password: '', change_password: false })
 
+// 分页相关（文章类型表格）
+const articleTypeCurrentPage = ref(1)
+const articleTypePageSize = ref(15)
+const pagedArticleTypes = computed(() => {
+  const start = (articleTypeCurrentPage.value - 1) * articleTypePageSize.value
+  const end = start + articleTypePageSize.value
+  return articleTypes.value.slice(start, end)
+})
+const articleTypePagination = computed(() => ({
+  current: articleTypeCurrentPage.value,
+  pageSize: articleTypePageSize.value,
+  total: articleTypes.value.length,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+const handleArticleTypePageChange = (page) => { articleTypeCurrentPage.value = page }
+const handleArticleTypePageSizeChange = (size) => { articleTypePageSize.value = size; articleTypeCurrentPage.value = 1 }
+
+// 分页相关（账号表格）
+const accountCurrentPage = ref(1)
+const accountPageSize = ref(15)
+const pagedAccounts = computed(() => {
+  const start = (accountCurrentPage.value - 1) * accountPageSize.value
+  const end = start + accountPageSize.value
+  return accounts.value.slice(start, end)
+})
+const accountPagination = computed(() => ({
+  current: accountCurrentPage.value,
+  pageSize: accountPageSize.value,
+  total: accounts.value.length,
+  showTotal: true,
+  showPageSize: true,
+  pageSizeOptions: [10, 15, 20]
+}))
+const handleAccountPageChange = (page) => { accountCurrentPage.value = page }
+const handleAccountPageSizeChange = (size) => { accountPageSize.value = size; accountCurrentPage.value = 1 }
+
 const platformNames = {
   zhipu: '智谱AI',
   yuanbao: '腾讯元宝',
@@ -213,6 +296,28 @@ const settings = ref({
   default_article_type: 'free'
 })
 const savingSettings = ref(false)
+
+// 批量生成默认配置
+const batchConfig = ref({
+  article_platform: 'zhipu',
+  article_account_id: '',
+  image_platform: 'doubao',
+  generate_images: true,
+  image_count_per_chapter: 3
+})
+
+// 文章生成平台的账号列表
+const articlePlatformAccounts = ref([])
+
+// 加载文章平台账号
+async function loadArticlePlatformAccounts() {
+  try {
+    const res = await aiConfigApi.getAccounts(batchConfig.value.article_platform)
+    articlePlatformAccounts.value = res.list || []
+  } catch (e) {
+    console.error('加载文章平台账号失败', e)
+  }
+}
 
 // 加载文章类型
 async function loadArticleTypes() {
@@ -371,6 +476,10 @@ async function loadSettings() {
   try {
     const res = await aiConfigApi.getSettings()
     settings.value = { ...settings.value, ...res }
+    // 加载批量生成默认配置
+    if (res.batch_generate) {
+      batchConfig.value = { ...batchConfig.value, ...res.batch_generate }
+    }
   } catch (e) {
     console.error('加载设置失败', e)
   }
@@ -380,7 +489,9 @@ async function loadSettings() {
 async function saveSettings() {
   savingSettings.value = true
   try {
-    await aiConfigApi.updateSettings(settings.value)
+    // 保存基础设置和批量生成配置
+    const saveData = { ...settings.value, batch_generate: batchConfig.value }
+    await aiConfigApi.updateSettings(saveData)
     Message.success('设置保存成功')
   } catch (e) {
     Message.error('保存失败')
@@ -389,10 +500,18 @@ async function saveSettings() {
   }
 }
 
+// 监听文章生成平台变化，重新加载账号
+watch(() => batchConfig.value.article_platform, () => {
+  batchConfig.value.article_account_id = ''
+  loadArticlePlatformAccounts()
+})
+
 onMounted(() => {
   loadArticleTypes()
   loadPrompts()
   loadAccounts()
+  loadSettings()
+  loadArticlePlatformAccounts()
   loadSettings()
 })
 </script>

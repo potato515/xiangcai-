@@ -3,7 +3,7 @@ import { Message } from '@arco-design/web-vue'
 
 const request = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: 300000  // 5分钟超时，适配AI生成等长时间操作
 })
 
 request.interceptors.request.use(
